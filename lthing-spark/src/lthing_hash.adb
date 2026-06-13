@@ -1,13 +1,11 @@
 ------------------------------------------------------------------------------
---  LTHING.Hash (body) — SHAKE512 over the asm Keccak sponge
+--  LTHING.Hash (body) — SHAKE512 over the pure Ada/SPARK Keccak sponge.
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
 pragma SPARK_Mode (On);
 
-with Interfaces;        use Interfaces;
-with Interfaces.C;
-with LTHING_Crypto_FFI; use LTHING_Crypto_FFI;
+with LTHING_Keccak; use LTHING_Keccak;
 
 package body LTHING_Hash is
 
@@ -15,21 +13,10 @@ package body LTHING_Hash is
      (Input  : Byte_Array;
       Output : out Digest)
    is
-      State : Keccak_State := (others => 0);
-      Buf   : Byte_Array (0 .. 63) := (others => 0);
+      Buf : Byte_Array (0 .. 63);
    begin
-      SHAKE_Absorb
-        (State    => State,
-         Data     => Input,
-         Data_Len => Interfaces.C.unsigned (Input'Length),
-         Rate     => SHAKE512_Rate);
-
-      SHAKE_Squeeze
-        (State      => State,
-         Output     => Buf,
-         Output_Len => 64,
-         Rate       => SHAKE512_Rate);
-
+      --  LTHING "SHAKE512" = Keccak sponge at rate 72 with the SHAKE domain.
+      Sponge (Input, Rate_SHA3_512, Domain_SHAKE, Buf);
       for I in Digest_Index loop
          Output (I) := Buf (I);
       end loop;
@@ -40,7 +27,6 @@ package body LTHING_Hash is
       Artifact      : Byte_Array;
       Output        : out Digest)
    is
-      --  Concatenate Previous_Seal (64 bytes) || Artifact, then SHAKE512.
       Concat_Len : constant Natural := 64 + Artifact'Length;
       Concat     : Byte_Array (0 .. Concat_Len - 1) := (others => 0);
       J          : Natural := 0;
@@ -51,12 +37,10 @@ package body LTHING_Hash is
       J := 64;
       for I in Artifact'Range loop
          pragma Loop_Invariant
-           (J = 64 + (I - Artifact'First)
-            and then J < Concat_Len);
+           (J = 64 + (I - Artifact'First) and then J < Concat_Len);
          Concat (J) := Artifact (I);
          J := J + 1;
       end loop;
-
       SHAKE512 (Concat, Output);
    end Chain_Hash;
 
