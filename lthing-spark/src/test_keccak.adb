@@ -17,6 +17,7 @@
 ------------------------------------------------------------------------------
 
 with LTHING_Keccak;   use LTHING_Keccak;
+with LTHING_Types;    use LTHING_Types;
 with Interfaces;      use Interfaces;
 with Ada.Text_IO;     use Ada.Text_IO;
 with Ada.Command_Line;

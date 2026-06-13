@@ -23,18 +23,15 @@
 
 pragma SPARK_Mode (On);
 
-with Interfaces; use Interfaces;
+with Interfaces;   use Interfaces;
+with LTHING_Types; use LTHING_Types;
 
 package LTHING_Keccak is
 
-   subtype Byte is Unsigned_8;
-
-   --  Bounded octet string. The bound (mirrors LTHING_Types.Byte_Array) is what
-   --  lets gnatprove bound 'Length and discharge the offset arithmetic. Kept
-   --  local so this unit builds standalone and drops into lthing-spark as-is.
-   Max_Bytes : constant := 1_048_576;            --  1 MiB
-   subtype Index_Range is Natural range 0 .. Max_Bytes;
-   type Byte_Array is array (Index_Range range <>) of Byte;
+   --  Byte and the bounded Byte_Array come from LTHING_Types, so the sponge
+   --  shares one octet-string type with LTHING_Hash and the judicial layer
+   --  (no conversion at the call boundary). The bound on the index is what lets
+   --  gnatprove bound 'Length and discharge the offset arithmetic.
 
    --  Keccak state: 25 lanes of 64 bits, lane index = x + 5*y.
    type State is array (0 .. 24) of Unsigned_64;
