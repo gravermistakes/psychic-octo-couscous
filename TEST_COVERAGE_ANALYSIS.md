@@ -1,8 +1,16 @@
 # LTHING Ada/SPARK — Test Coverage Analysis
 
-**Subject:** `lthing-spark` (ML-DSA-65 / FIPS 204 verifier + fail-closed `.jd.lthing` judicial layer)
+**Subject:** `lthing-spark` (ML-DSA-65 / FIPS 204 verifier + fail-closed `.jd.lthing` judicial layer) and the `lthing_asm` crypto primitives it links.
 **Date:** 2026-06-13
-**Method:** Manual review of every source unit, every `test_*.adb`, `lthing.gpr`, `PROOF_REPORT.md`, and the `kat/` assets. No coverage instrumentation exists in the project, so figures below are derived by hand from which subprograms and branches are actually exercised.
+**Method:** Manual review of every source unit, every `test_*.adb`, `lthing.gpr`, `PROOF_REPORT.md`, the `kat/` assets, **and the `lthing_asm` tree** (`keccak.asm`, `KECCAK_FIX_REPORT_20260608.md`, the C test harnesses, and AVRS `FINDING-001`). No coverage instrumentation exists in the project, so figures below are derived by hand from which subprograms and branches are actually exercised.
+
+> **Scope note — multiple `.lthing` doctypes.** The `.lthing` container is a
+> *family* of document sub-extensions (`.jd` judicial, plus `.ml`, `.hl`,
+> `.ver`, `.cry`, `.targz`, and the `.npo`/`.gv`/`.md` types named in
+> `INTEGRATION.md`). The verifier and its tests currently cover **only the
+> judicial (`.jd`, DocType `0x0004`) path** — `Magic_Ok` hard-codes that single
+> doctype. The other 4-5 sub-extensions have **no parse/verify path and no
+> tests at all**. See gap 3.11.
 
 ---
 
@@ -71,21 +79,50 @@ This means:
   valuable as a *negative* gate: with the stub, all 15 must currently report
   reject, and the harness should flag if any accept slips through.
 
-**3.1 `lthing_hash` has zero tests** and sits on a known-broken primitive.
-`PROOF_REPORT.md` states the asm Keccak-f[1600] permutation **computes the
-wrong output**, discovered only because the asm was hand-checked separately —
-there is no Ada-level regression that would catch this or confirm a fix.
-- No FIPS 202 SHAKE512 known-answer test at the Ada `LTHING_Hash.SHAKE512` level
-  (e.g. `SHAKE512("")` → `46b9dd2b0ba88d13...`).
-- `Chain_Hash`'s concatenation logic (64-byte seal prefix + artifact, the
-  `Loop_Invariant`, the length bound) is untestable independent of the
-  permutation today, but should get a test the moment Keccak is fixed.
-- **Determinism** — same input → same digest — is the property the seal-match
-  and chain-link checks *rely on*, and it is asserted nowhere.
-- *Recommendation:* `test_hash.adb` with FIPS 202 SHAKE512 KATs (empty, short,
-  and >72-byte multi-block inputs to exercise the sponge rate), a determinism
-  check, and a `Chain_Hash` vector. This is also the regression that proves the
-  Keccak fix when it happens.
+**3.1 Keccak/SHAKE: fixed, but the fix is gated by nothing that is committed —
+and the production rate is never KAT'd. `lthing_hash` still has zero tests.**
+
+*Correction to the stale `PROOF_REPORT.md` (06-06) framing:* the asm
+Keccak-f[1600] **has since been fixed** (`KECCAK_FIX_REPORT_20260608.md`): three
+P0 bugs — a ρ+π step that was a no-op ("skipped for brevity"), in-place χ
+corruption, and missing SHAKE `pad10*1`+`0x1F` domain separation — were
+repaired, and FINDING-001's uninitialized-shift bug is fixed in `keccak.asm`
+(the byte-path now does `mov rcx, r11` before `shr r10, cl`). So Parts 3-5 are
+unblocked. **But the regression that proves this lives nowhere in the repo:**
+- **The committed asm harness tests no SHAKE/Keccak at all.** `test_crypto_asm.c`
+  (the "5/5 PASS" cited in the fix report) covers `rule30_init/evolve/extract`,
+  `mask/unmask`, and `compare_constant_time` — **zero** Keccak assertions.
+  `test_hardened.c` is rule30/XOR only. The fix report's KATs
+  (`keccak_f1600(0)=f1258f7940e1dde7`, `SHAKE256("")`, `SHAKE256("abc")`,
+  `SHAKE256("") 200B`) were run ad-hoc and committed to **no** test file. A
+  regression that reintroduces any of the three bugs would be caught by nothing
+  — the *exact* failure mode FINDING-001 called out ("test harness never ran").
+- **The actual production configuration is never tested.** The Ada layer only
+  ever calls SHAKE at **rate 72 ("SHAKE512" — `LTHING_Crypto_FFI.SHAKE512_Rate`)**,
+  which is what the Provenance Seal and `provenance_chain_hash` use. *Every*
+  reported KAT is `keccak_f1600` or standard **SHAKE256 (rate 136)**. "SHAKE512"
+  is not a standard FIPS 202 function, so there is no off-the-shelf vector — but
+  the rate-72 padding path (`0x1F` at the message end, `0x80` at byte `rate-1 = 71`)
+  is precisely the byte-position-specific logic the three fixed bugs lived in,
+  and it has zero coverage.
+- **Non-rate-aligned input is still untested**, despite FINDING-001 explicitly
+  recommending "a test case where input length is NOT a multiple of the rate."
+  `LTHING_Hash` absorbs arbitrary-length judicial documents (up to ~1 MiB),
+  almost always non-72-aligned, exercising the final padded-block path.
+- **No Ada-level test exists for `LTHING_Hash` at all** (`SHAKE512`, `Chain_Hash`).
+  `Chain_Hash`'s concatenation logic (64-byte seal prefix + artifact, the
+  `Loop_Invariant`, the length bound) and **determinism** — same input → same
+  digest, the property the seal-match and chain-link checks *rely on* — are
+  asserted nowhere.
+- *Recommendation:*
+  1. Commit the fix-report KATs as a permanent C regression (`keccak_f1600(0)`,
+     SHAKE256 empty/abc/200B) so the Keccak fix cannot silently regress.
+  2. Add a **rate-72 self-consistency + non-aligned** gate: pin
+     `SHAKE("", rate=72, 64B)` and a couple of multi-block, non-72-aligned
+     inputs to fixed expected digests captured from the now-correct build, so
+     the production path has a frozen vector even absent a FIPS "SHAKE512" KAT.
+  3. Add `test_hash.adb` driving `LTHING_Hash.SHAKE512`/`Chain_Hash` with those
+     same vectors plus a determinism check.
 
 **3.2 `lthing_judicial`: three status codes are unreachable or untested.**
 `test_judicial` covers `Bad_Envelope`, `Signature_Invalid`, the
@@ -176,28 +213,47 @@ feeds thousands of random / malformed / truncated / boundary-length buffers to
 `Parse_Unverified` is *always* untrusted). This is cheap, high-signal, and
 absent.
 
-**3.10 FFI boundary has no in-repo regression.**
-Comments reference an "asm regression harness (tests/)" that is **not in this
-archive**. From this repo's standpoint the asm primitives (Keccak, `compare_constant_time`,
-`xor_mask`, `rule30`) are untested — which is exactly how the broken Keccak
-permutation went unnoticed until late. The asm KATs should live in, or be
-mirrored into, this repo and run by the same `test` target.
+**3.10 FFI boundary regression is partial and excludes the hash core.**
+The asm harness (`tests/test_crypto_asm.c`, `tests/test_hardened.c`) *does*
+exist and covers rule30 and the XOR/compare primitives — but, as noted in 3.1,
+it tests **none** of the Keccak/SHAKE surface that `lthing_hash` and the whole
+provenance chain depend on. The asm KATs that were run by hand should be folded
+into this harness and run by the same `test` target as the Ada drivers, so the
+FFI trust boundary is covered end-to-end rather than primitive-by-primitive.
+
+**3.11 Only one of 4-5 `.lthing` sub-extensions is implemented or tested.**
+The `.lthing` format is a family — `.jd` (judicial), `.ml`, `.hl`, `.ver`,
+`.cry`, `.targz`, and the `.npo`/`.gv`/`.md` types in `INTEGRATION.md`. Today:
+- `Magic_Ok` (`lthing_judicial.adb:613`) accepts **only** `Judicial_DocType =
+  0x0004`; every other sub-extension is rejected as `Bad_Magic` with no
+  dedicated parse/verify path.
+- There is **no test matrix over doctypes** — no fixture per sub-extension, no
+  assertion that each type's envelope shape, magic byte, and type-specific
+  fields verify (and that a `.jd` body presented under a `.cry` extension, or
+  vice-versa, is rejected — a confusion/type-substitution attack surface).
+- *Recommendation:* once the other doctypes are specified, add one golden
+  envelope per sub-extension and a parametrized test that (a) accepts each valid
+  type and (b) rejects cross-type / wrong-magic substitution. Until then, add a
+  single test asserting the *current* honest behavior: non-`0x0004` doctypes
+  return `Bad_Magic`, never `Verified`.
 
 ---
 
 ## 4. Recommended order of work
 
-1. **Wire the orphaned KAT** (`test_kat.adb`) — even as a negative gate today (3.0).
-2. **Add `test_hash.adb` with FIPS 202 SHAKE512 KATs + determinism** — this is
-   also the regression that gates the Keccak fix the report is blocked on (3.1).
+1. **Lock in the Keccak fix (3.1).** Commit the fix-report KATs as a permanent
+   C regression, add a rate-72 ("SHAKE512") + non-aligned vector for the
+   *production* path, then `test_hash.adb` over `SHAKE512`/`Chain_Hash` +
+   determinism. The fix is real but currently guarded by nothing in-repo.
+2. **Wire the orphaned KAT** (`test_kat.adb`) — even as a negative gate today (3.0).
 3. **Close the judicial branch gaps**: `Bad_Magic`, `Parse_Unverified` short
    input, and fix the tautological `Chain_Broken` gate so it is reachable and
    testable (3.2); add `Compare_CT` equal/unequal vectors (3.3).
 4. **Strengthen NTT**: one reference KAT + Schoolbook oracle vector + edge polys (3.4).
 5. **Process**: aggregating `test` target with non-zero exit on failure, then
    `gnatcov` numbers and a fail-closed property/fuzz harness (3.7–3.9).
-6. Boundary field cases (3.5) and the `Verify` stub guard (3.6) — quick wins,
-   fold in opportunistically.
+6. Boundary field cases (3.5), the `Verify` stub guard (3.6), and the
+   doctype/sub-extension matrix (3.11) — fold in opportunistically.
 
 ## 5. Bottom line
 
@@ -205,8 +261,12 @@ The **proven core is in good shape**: field arithmetic and the judicial
 fail-closed contracts are both gnatprove-discharged *and* runtime-tested, which
 is genuinely strong. The exposure is concentrated in (a) everything that is
 `SPARK_Mode Off` or behind the FFI — NTT and the asm primitives carry their full
-risk on tests alone, and the asm Keccak is *known wrong*; (b) the judicial layer's
-unreached status codes and one dead branch; and (c) the end-to-end KAT that
-exists on disk but is never run. The single highest-leverage action is to stop
-treating `kat/mldsa65_sigver.json` and the asm/SHAKE KATs as documentation and
-turn them into executed, exit-code-enforced gates.
+risk on tests alone; the asm Keccak has been **fixed** (06-08), but its fix is
+gated by no committed test and its *production* rate-72 path was never KAT'd;
+(b) the judicial layer's unreached status codes and one dead branch; (c) the
+end-to-end KAT that exists on disk but is never run; and (d) the 4-5 other
+`.lthing` sub-extensions, which are neither implemented nor tested. The single
+highest-leverage action is to stop treating `kat/mldsa65_sigver.json` and the
+asm/SHAKE KATs as documentation and turn them into executed, exit-code-enforced
+gates — starting with the Keccak/SHAKE vectors, so the hardest-won fix in the
+project cannot silently regress.
