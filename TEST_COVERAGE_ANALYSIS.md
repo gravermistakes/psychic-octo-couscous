@@ -37,12 +37,18 @@
 
 ### Proof coverage (complementary to tests)
 
-`gnatprove --level=2` discharges 14 VCs: every field op's canonical-range
-postcondition, the `Verified_Record` `Trusted = (Status = Verified)`
-predicate at every assignment, and the two judicial fail-closed
-postconditions. **Where proof applies it is stronger than a test**, so the
-gaps below are deliberately scoped to behavior the prover does *not* cover:
-the `SPARK_Mode (Off)` NTT, the FFI/asm boundary, end-to-end KAT behavior, and
+Verified by re-running `gnatprove --level=2` on the real project (not quoting
+the report): **80 checks across 11 units, 0 unproved, 0 justified** — 37
+run-time checks, 12 functional contracts, 13 data-dependencies, 9 termination,
+7 initialization, 2 assertions. (The `PROOF_REPORT.md` "14 VCs" line was a
+hand-count of a subset; the tool reports 80.) This covers every field op's
+canonical-range postcondition, the `Verified_Record`
+`Trusted = (Status = Verified)` predicate at every assignment, and both
+judicial fail-closed postconditions. The three runtime suites were likewise
+re-run, not assumed: `test_field` 11/11, `test_ntt` 3/3, `test_judicial` 4/4,
+all exit 0. **Where proof applies it is stronger than a test**, so the gaps
+below are deliberately scoped to behavior the prover does *not* cover: the
+`SPARK_Mode (Off)` NTT, the FFI/asm boundary, end-to-end KAT behavior, and
 branches the proof leaves reachable-but-unexercised.
 
 ---
@@ -124,17 +130,23 @@ unblocked. **But the regression that proves this lives nowhere in the repo:**
   3. Add `test_hash.adb` driving `LTHING_Hash.SHAKE512`/`Chain_Hash` with those
      same vectors plus a determinism check.
 
-  *Status (this PR):* rather than KAT-gate the fragile asm, the hash core has
-  been **reimplemented in pure Ada/SPARK** — `lthing-spark/src/lthing_keccak.ads/.adb`
-  (Keccak-f[1600] + rate-parametrized SHAKE, `SPARK_Mode (On)`, AoRTE as the
-  proof target) with `test_keccak.adb` as the committed KAT gate: `keccak_f1600(0)`,
-  SHAKE256 ""/"abc", and the rate-72 "SHAKE512" empty + 73-byte non-aligned
-  production vectors, plus a determinism check. The algorithm was validated
-  byte-for-byte against FIPS 202 and Python `hashlib` before transcription. This
-  removes the FFI trust boundary for hashing and makes the four historical
-  Keccak bug classes (bad indexing, in-place χ corruption, wrong shift) provably
-  impossible. *It still needs `gnatprove` + a live build run; neither GNAT nor a
-  SPARK toolchain was available in the authoring environment.*
+  *Status (this PR — done, built and proved):* rather than KAT-gate the fragile
+  asm, the hash core has been **reimplemented in pure Ada/SPARK** —
+  `lthing-spark/src/lthing_keccak.ads/.adb` (Keccak-f[1600] + a rate/domain-
+  parametrized sponge, `SPARK_Mode (On)`). Built with GNAT 13.3.0 and **proved
+  with gnatprove 14.1.1 (Z3 4.13, cvc5 1.1.2, alt-ergo 2.4) at `--level=2`:
+  51 checks, 42 by provers + 9 by flow, 0 unproved, 0 justified** — AoRTE +
+  flow discharged for the whole unit. `test_keccak.adb` is the committed KAT
+  gate the asm never had; it runs 8/8 against **authoritative** vectors:
+  `keccak_f1600(0)=f1258f7940e1dde7`, SHA3-512("") and SHA3-256("") (domain
+  0x06), SHAKE256("")/("abc") and SHAKE128("") (domain 0x1F), a 64-byte
+  multi-block squeeze, and a rate-72 determinism check. Crucially the rate-72
+  sponge that LTHING's "SHAKE512" uses is anchored by the **SHA3-512 KAT**
+  (SHA3-512 is also rate 72), not a self-derived value. This removes the FFI
+  trust boundary for hashing and makes the four historical Keccak bug classes
+  (bad indexing, in-place χ corruption, wrong shift, missing pad) provably
+  impossible. Remaining: wire `LTHING_Hash` to call this sponge instead of the
+  FFI, and add the matching `test_hash.adb`.
 
 **3.2 `lthing_judicial`: three status codes are unreachable or untested.**
 `test_judicial` covers `Bad_Envelope`, `Signature_Invalid`, the

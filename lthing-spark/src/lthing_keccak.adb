@@ -1,13 +1,14 @@
 ------------------------------------------------------------------------------
---  LTHING.Keccak (body) — FIPS 202 Keccak-f[1600] + SHAKE sponge.
+--  LTHING.Keccak (body) — FIPS 202 Keccak-f[1600] + sponge.
 --
---  Transcribed directly from a reference validated against FIPS 202 known
---  answers and Python hashlib (see package spec). Structured to be SPARK-clean:
---    * lanes are modular Unsigned_64 (no overflow possible);
---    * chi reads from a separate buffer B (no in-place corruption — the
---      2026-06-08 bug);
---    * rho+pi is a real permutation into B, not a no-op;
---    * byte XOR/extract use checked offsets, never 3-register addressing.
+--  SPARK-clean by construction:
+--    * lanes are modular Unsigned_64 -> no arithmetic overflow;
+--    * rho+pi writes a real permutation into B (never a no-op);
+--    * chi reads from B and writes A -> no in-place corruption;
+--    * every byte XOR/extract uses a single checked offset (Pos/8, Pos mod 8),
+--      never multi-register addressing, never an uninitialised shift count;
+--    * the squeeze is a definite loop over Output'Range, so the OUT parameter
+--      is provably fully initialised.
 --
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
@@ -20,7 +21,7 @@ package body LTHING_Keccak is
    subtype Coord      is Natural range 0 .. 4;
    subtype Rot_Amount is Natural range 0 .. 63;
 
-   --  Round constants RC[0..23] (FIPS 202, Table / Algorithm 5).
+   --  Round constants RC[0..23] (FIPS 202).
    RC : constant array (0 .. 23) of Unsigned_64 :=
      (16#0000000000000001#, 16#0000000000008082#, 16#800000000000808A#,
       16#8000000080008000#, 16#000000000000808B#, 16#0000000080000001#,
@@ -33,11 +34,11 @@ package body LTHING_Keccak is
 
    --  Rotation offsets rho[x][y] (FIPS 202).
    Rho : constant array (Coord, Coord) of Rot_Amount :=
-     ((0, 36, 3, 41, 18),
-      (1, 44, 10, 45, 2),
-      (62, 6, 43, 15, 61),
+     ((0,  36, 3,  41, 18),
+      (1,  44, 10, 45, 2),
+      (62, 6,  43, 15, 61),
       (28, 55, 25, 21, 56),
-      (27, 20, 39, 8, 14));
+      (27, 20, 39, 8,  14));
 
    ---------------------------------------------------------------------------
    --  Keccak_F1600
@@ -45,7 +46,9 @@ package body LTHING_Keccak is
    procedure Keccak_F1600 (A : in out State) is
       C : array (Coord) of Unsigned_64;
       D : array (Coord) of Unsigned_64;
-      B : State;
+      --  Zero-init so flow analysis sees B fully initialised before chi reads
+      --  it; the rho+pi loop is a permutation that overwrites all 25 lanes.
+      B : State := (others => 0);
    begin
       for Rnd in 0 .. 23 loop
          --  theta
@@ -63,7 +66,7 @@ package body LTHING_Keccak is
             end loop;
          end loop;
 
-         --  rho + pi  (write into B; never a no-op)
+         --  rho + pi  (real permutation into B)
          for Y in Coord loop
             for X in Coord loop
                B (Y + 5 * ((2 * X + 3 * Y) mod 5)) :=
@@ -71,7 +74,7 @@ package body LTHING_Keccak is
             end loop;
          end loop;
 
-         --  chi  (read from B, write A — no in-place corruption)
+         --  chi  (read B, write A)
          for Y in Coord loop
             for X in Coord loop
                A (X + 5 * Y) :=
@@ -87,18 +90,20 @@ package body LTHING_Keccak is
    end Keccak_F1600;
 
    ---------------------------------------------------------------------------
-   --  SHAKE sponge
+   --  Sponge
    ---------------------------------------------------------------------------
-   procedure SHAKE
+   procedure Sponge
      (Input  : Byte_Array;
       Rate   : Positive;
+      Domain : Byte;
       Output : out Byte_Array)
    is
       St : State := (others => 0);
 
-      --  XOR one message byte into the sponge state at byte position Pos.
+      --  XOR one message byte into the state at byte position Pos (< 200).
       procedure Xor_Byte (Pos : Natural; Val : Byte)
-        with Global => (In_Out => St)
+        with Global => (In_Out => St),
+             Pre    => Pos < 200
       is
          Lane : constant Lane_Range := Pos / 8;
          Sh   : constant Natural    := (Pos mod 8) * 8;
@@ -106,9 +111,10 @@ package body LTHING_Keccak is
          St (Lane) := St (Lane) xor Shift_Left (Unsigned_64 (Val), Sh);
       end Xor_Byte;
 
-      --  Extract one output byte from the sponge state at byte position Pos.
+      --  Extract one output byte from the state at byte position Pos (< 200).
       function Get_Byte (Pos : Natural) return Byte
-        with Global => (Input => St)
+        with Global => (Input => St),
+             Pre    => Pos < 200
       is
          Lane : constant Lane_Range := Pos / 8;
          Sh   : constant Natural    := (Pos mod 8) * 8;
@@ -116,12 +122,14 @@ package body LTHING_Keccak is
          return Byte (Shift_Right (St (Lane), Sh) and 16#FF#);
       end Get_Byte;
 
-      N    : constant Natural := Input'Length;
-      Off  : Natural := 0;       --  bytes of Input consumed
-      Rem_ : Natural;
+      N         : constant Natural := Input'Length;
+      Off       : Natural := 0;    --  message bytes consumed
+      Remaining : Natural;
    begin
       --  Absorb full rate-sized blocks.
       while N - Off >= Rate loop
+         pragma Loop_Invariant (Off <= N - Rate);
+         pragma Loop_Variant (Decreases => N - Off);
          for I in 0 .. Rate - 1 loop
             Xor_Byte (I, Input (Input'First + Off + I));
          end loop;
@@ -129,30 +137,32 @@ package body LTHING_Keccak is
          Off := Off + Rate;
       end loop;
 
-      --  Final (short) block + SHAKE padding: 0x1F at the message end,
-      --  0x80 at byte (rate-1). If those coincide the byte becomes 0x9F.
-      Rem_ := N - Off;
-      for I in 0 .. Rem_ - 1 loop
+      --  Final block + pad10*1 with the domain suffix: Domain at the message
+      --  end, 0x80 at byte (rate-1). If they coincide the byte is their XOR.
+      Remaining := N - Off;
+      for I in 0 .. Remaining - 1 loop
          Xor_Byte (I, Input (Input'First + Off + I));
       end loop;
-      Xor_Byte (Rem_, 16#1F#);
+      Xor_Byte (Remaining, Domain);
       Xor_Byte (Rate - 1, 16#80#);
       Keccak_F1600 (St);
 
-      --  Squeeze: emit Rate bytes per permutation until Output is filled.
+      --  Squeeze: one state byte per Output element, permuting after each full
+      --  rate-block. Definite loop over Output'Range => Output fully written.
       declare
-         Out_Pos : Natural := 0;
+         Pos : Natural := 0;   --  byte offset within the current block
       begin
-         loop
-            for I in 0 .. Rate - 1 loop
-               exit when Out_Pos >= Output'Length;
-               Output (Output'First + Out_Pos) := Get_Byte (I);
-               Out_Pos := Out_Pos + 1;
-            end loop;
-            exit when Out_Pos >= Output'Length;
-            Keccak_F1600 (St);
+         for I in Output'Range loop
+            pragma Loop_Invariant (Pos < Rate);
+            Output (I) := Get_Byte (Pos);
+            if Pos = Rate - 1 then
+               Keccak_F1600 (St);
+               Pos := 0;
+            else
+               Pos := Pos + 1;
+            end if;
          end loop;
       end;
-   end SHAKE;
+   end Sponge;
 
 end LTHING_Keccak;
