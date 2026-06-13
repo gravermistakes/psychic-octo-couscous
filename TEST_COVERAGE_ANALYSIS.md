@@ -145,8 +145,12 @@ unblocked. **But the regression that proves this lives nowhere in the repo:**
   (SHA3-512 is also rate 72), not a self-derived value. This removes the FFI
   trust boundary for hashing and makes the four historical Keccak bug classes
   (bad indexing, in-place χ corruption, wrong shift, missing pad) provably
-  impossible. Remaining: wire `LTHING_Hash` to call this sponge instead of the
-  FFI, and add the matching `test_hash.adb`.
+  impossible. **`LTHING_Hash` is now wired to this sponge** — `SHAKE512` calls
+  `Sponge (Input, Rate_SHA3_512, Domain_SHAKE, …)`, retiring the FFI hash path —
+  and `test_hash.adb` covers it with relational gates only (no frozen digests):
+  determinism, input-sensitivity, and `Chain_Hash (prev,art) = SHAKE512 (prev‖art)`.
+  Whole-project re-proof after wiring: **`gnatprove -P lthing.gpr` → 130 checks,
+  0 unproved**; `run_tests.sh` → 5/5 suites pass.
 
 **3.2 `lthing_judicial`: three status codes are unreachable or untested.**
 `test_judicial` covers `Bad_Envelope`, `Signature_Invalid`, the
@@ -214,14 +218,14 @@ is the inverse of audit FINDING-002 and worth a hard assertion.
 
 ### LOW / PROCESS
 
-**3.7 No test driver, no aggregation, no CI.**
-Each `test_*.adb` is a separate `main` printing `[PASS]/[FAIL]`; nothing runs
-them together or yields a non-zero exit code on failure. A failing test would
-not fail a build.
-- *Recommendation:* a `tests.gpr` + a `Makefile`/`alr`/shell `test` target that
-  builds and runs all drivers and **exits non-zero on any `[FAIL]`** (the
-  drivers already count `Fails` — surface it as the process exit code instead of
-  only printing it). Wire into CI alongside `gnatprove`.
+**3.7 No test driver, no aggregation, no CI. — DONE (this PR).**
+Each `test_*.adb` was a separate `main`; nothing ran them together or failed the
+build on `[FAIL]`. Now `lthing-spark/run_tests.sh` builds and runs every
+`src/test_*.adb`, greps for `[FAIL]`, and **exits non-zero** on any build/run/assert
+failure; `lthing-spark/Makefile` exposes `build`/`test`/`prove`/`clean`; and
+`.github/workflows/ci.yml` installs GNAT + gnatprove and runs `make test` and
+`make prove` on push/PR. Verified in-tree: `run_tests.sh` → 5/5 suites pass
+(field 11, hash 3, judicial 4, keccak 8, ntt 3), exit 0.
 
 **3.8 No coverage measurement.**
 Literal line/branch/MCDC coverage is unmeasured. `gnatcov` (or
