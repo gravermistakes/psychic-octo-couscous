@@ -71,19 +71,18 @@ branches the proof leaves reachable-but-unexercised.
 
 ### HIGH
 
-**3.0 The 15-vector ML-DSA-65 sigVer KAT is never executed.**
-`kat/mldsa65_sigver.json` holds the single most important test asset in the
-project — 15 vectors, 3 expected-accept / 12 expected-reject — but **no Ada
-test driver parses or runs it.** Nothing consumes `pk/message/context/signature/expected`.
-This means:
-- The end-to-end verifier behavior (the whole point of the library) is untested.
-- When Parts 3–5 land there is no harness ready to gate them.
-- *Recommendation:* add `test_kat.adb` (plus a minimal JSON reader, or a build
-  step that flattens the vectors to a fixed-format binary the Ada side reads)
-  that asserts `Verify` returns the `expected` boolean for all 15 vectors —
-  **valid must accept, every tampered vector must reject.** Even today it is
-  valuable as a *negative* gate: with the stub, all 15 must currently report
-  reject, and the harness should flag if any accept slips through.
+**3.0 The 15-vector ML-DSA-65 sigVer KAT — DONE: now executed, 15/15.**
+`kat/mldsa65_sigver.json` (15 vectors, 3 accept / 12 reject) was the single most
+important untested asset. It is now wired: `tools/gen_kat_vectors.py` emits
+`src/mldsa_kat_vectors.ads` (byte-for-byte from the JSON) and `src/test_kat.adb`
+runs every vector through `LTHING_MLDSA65.Verify`. **Result: 15/15 against
+`expected` — accepts tcId 31/32/33, rejects 34–45.** This is the authoritative
+proof that the verifier genuinely accepts valid signatures and rejects tampered
+ones. The full ML-DSA-65 verifier (FIPS 204 Alg. 3 + 8) is implemented across
+`lthing_mldsa_sample` (ExpandA/SampleInBall), `lthing_mldsa_round`
+(Decompose/UseHint/W1Encode), `lthing_mldsa_codec` (pk/sig decode), and
+`lthing_mldsa65` (Verify), composed over the proved field + KAT-gated NTT/Keccak.
+`Arithmetic_Core_Complete` is now `True`, gated legitimately on this KAT pass.
 
 **3.1 Keccak/SHAKE: fixed, but the fix is gated by nothing that is committed —
 and the production rate is never KAT'd. `lthing_hash` still has zero tests.**
@@ -210,11 +209,13 @@ and `5→5` but not `To_Centered(Q/2)` and `To_Centered(Q/2 + 1)` — precisely
 where an off-by-one would live. Also missing: `Add(Q-1, 1) → 0`, multiply-by-zero,
 `Reduce(0)`, and `Reduce` near the `(q-1)²` upper bound.
 
-**3.6 `lthing_mldsa65.Verify` stub is not pinned by a test.**
-No `test_mldsa65.adb`. The fail-closed posture
-(`Verify` ⇒ False, `Arithmetic_Core_Complete = False`) is asserted only in prose.
-Add a guard test so a premature "returns True" change trips immediately — this
-is the inverse of audit FINDING-002 and worth a hard assertion.
+**3.6 `lthing_mldsa65.Verify` — DONE: implemented and gated.**
+`Verify` is no longer a stub; it is the real FIPS 204 verifier, pinned by the
+15-vector KAT (3.0). The fail-closed property is preserved exactly: any decode
+failure, malformed hint, ‖z‖∞ overflow, challenge mismatch, or excess hint
+weight returns False; `Verify` returns True only on a genuine FIPS 204
+acceptance (proven by the 12 reject vectors all rejecting and the 3 accept
+vectors all accepting).
 
 ### LOW / PROCESS
 
@@ -285,16 +286,18 @@ The `.lthing` format is a family — `.jd` (judicial), `.ml`, `.hl`, `.ver`,
 
 ## 5. Bottom line
 
-The **proven core is in good shape**: field arithmetic and the judicial
-fail-closed contracts are both gnatprove-discharged *and* runtime-tested, which
-is genuinely strong. The exposure is concentrated in (a) everything that is
-`SPARK_Mode Off` or behind the FFI — NTT and the asm primitives carry their full
-risk on tests alone; the asm Keccak has been **fixed** (06-08), but its fix is
-gated by no committed test and its *production* rate-72 path was never KAT'd;
-(b) the judicial layer's unreached status codes and one dead branch; (c) the
-end-to-end KAT that exists on disk but is never run; and (d) the 4-5 other
-`.lthing` sub-extensions, which are neither implemented nor tested. The single
-highest-leverage action is to stop treating `kat/mldsa65_sigver.json` and the
-asm/SHAKE KATs as documentation and turn them into executed, exit-code-enforced
-gates — starting with the Keccak/SHAKE vectors, so the hardest-won fix in the
-project cannot silently regress.
+**The ML-DSA-65 verifier now works** — the FIPS 204 Alg. 3/8 verifier is
+implemented (sampling + rounding + codec + Verify over the proved field and the
+KAT-gated NTT/Keccak), and the authoritative 15-vector sigVer KAT passes **15/15**
+(3 accept, 12 reject). Hashing is a proved pure-SPARK Keccak/SHAKE. Whole-project
+`gnatprove -P lthing.gpr --level=2` = **306 checks, 0 unproved**; `run_tests.sh`
+runs **9/9** suites green and fails the build on any `[FAIL]`.
+
+Remaining work is now the judicial layer, not the crypto: (a) the `.jd.lthing`
+envelope slicing — real `Seal_Mismatch`/`Bad_Length`/chain-hash gates and wiring
+`Verify_Signature` to call `LTHING_MLDSA65.Verify` — is **deferred pending a
+concrete envelope byte spec**; (b) the unreached judicial status codes and the
+tautological `Chain_Broken` branch; (c) the 4–5 other `.lthing` sub-extensions,
+unimplemented; (d) secondary coverage (NTT reference KAT, field boundaries,
+fail-closed fuzz, `gnatcov` numbers). The crypto core — the project's whole
+reason for being — is done and KAT-true.
