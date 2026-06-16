@@ -1,58 +1,24 @@
 ------------------------------------------------------------------------------
---  LTHING.Crypto_FFI — Imports of the hardened x86-64 assembly primitives
+--  LTHING.Crypto_FFI — Import of the hardened x86-64 constant-time compare
 --
---  Binds the symbols exported by liblthing_crypto_asm (rule30.asm,
---  keccak.asm, xor_mask.asm) as verified by execution on 2026-06-06.
+--  Binds compare_constant_time from liblthing_crypto_asm. The SHAKE
+--  absorb/squeeze imports were REMOVED: the hash path is pure-Ada LTHING_Keccak
+--  now, so they were dead trust surface. Only the constant-time digest compare
+--  remains on the asm boundary (used by LTHING_Judicial.Digest_Equal).
 --
---  SPARK note: the imported subprograms are the trust boundary. They are
---  declared with Global => null and explicit parameter modes so SPARK can
---  reason about the Ada side; the asm bodies themselves are outside SPARK
---  and are validated by the assembly regression harness (tests/), not by
---  gnatprove. This separation is deliberate and documented.
+--  SPARK note: the imported subprogram is the trust boundary; declared with
+--  Global => null and explicit modes so SPARK can reason about the Ada side.
+--  The asm body is validated by the assembly regression harness, not gnatprove.
 --
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
 pragma SPARK_Mode (On);
 
-with Interfaces;        use Interfaces;
-with Interfaces.C;       use Interfaces.C;
-with LTHING_Types;      use LTHING_Types;
+with Interfaces.C;  use Interfaces.C;
+with LTHING_Types;  use LTHING_Types;
 
 package LTHING_Crypto_FFI is
-
-   --  Keccak sponge rate for SHAKE512 (FIPS 202): 72 bytes.
-   SHAKE512_Rate : constant := 72;
-
-   --  Keccak state: 25 lanes of 64 bits.
-   subtype Lane_Index is Natural range 0 .. 24;
-   type Keccak_State is array (Lane_Index) of Interfaces.Unsigned_64;
-
-   --  shake256_absorb(state, data, data_len, rate)
-   --  (the asm core is the shared Keccak permutation; SHAKE512 = rate 72)
-   procedure SHAKE_Absorb
-     (State    : in out Keccak_State;
-      Data     : Byte_Array;
-      Data_Len : Interfaces.C.unsigned;
-      Rate     : Interfaces.C.unsigned)
-     with Global => null,
-          Import => True,
-          Convention => C,
-          External_Name => "shake256_absorb",
-          Pre => Data'Length > 0 and then Rate = SHAKE512_Rate;
-
-   --  shake256_squeeze(state, output, output_len, rate)
-   procedure SHAKE_Squeeze
-     (State      : in out Keccak_State;
-      Output     : out Byte_Array;
-      Output_Len : Interfaces.C.unsigned;
-      Rate       : Interfaces.C.unsigned)
-     with Global => null,
-          Import => True,
-          Convention => C,
-          External_Name => "shake256_squeeze",
-          Pre  => Output'Length > 0 and then Rate = SHAKE512_Rate,
-          Post => Output'Length = Output'Length;
 
    --  compare_constant_time(a, b, len) -> 0 equal, 1 different
    function Compare_CT

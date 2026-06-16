@@ -6,18 +6,18 @@
 --      exactly ONE place — the final line — only after every gate passed.
 --    * Every failure path assigns a specific Status and returns immediately
 --      with Trusted = False (the type predicate keeps the two consistent).
---    * The ML-DSA-65 verifier is an explicit boundary that REJECTS by
---      default. The asm library does not yet provide ML-DSA; until a real
---      verifier is linked, Verify_Signature returns False, so the whole
---      pipeline fails closed. This is the safe inverse of audit FINDING-002
---      ("signature stub returns True"): a missing verifier must reject.
+--    * The ML-DSA-65 verifier (LTHING_MLDSA65) now exists and passes the
+--      FIPS 204 KAT, but it is NOT wired here yet: Parse_And_Verify cannot
+--      slice the signature/message out of the document until the .jd.lthing
+--      envelope byte layout is specified. Until then Verify_Signature returns
+--      False, so the pipeline fails closed. This is the safe inverse of audit
+--      FINDING-002 ("signature stub returns True"): missing wiring rejects.
 --
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
 pragma SPARK_Mode (On);
 
-with LTHING_Hash;       use LTHING_Hash;
 with LTHING_Crypto_FFI; use LTHING_Crypto_FFI;
 with Interfaces.C;      use Interfaces.C;
 
@@ -49,7 +49,9 @@ package body LTHING_Judicial is
         and then Natural (Document (Document'First + 9)) = Judicial_DocType;
    end Magic_Ok;
 
-   --  Constant-time digest equality via the asm primitive.
+   --  Constant-time digest equality via the asm primitive. Retained as the
+   --  helper the seal (Seal_Mismatch) and chain (Chain_Broken) gates will use
+   --  once the envelope spec lands; not called while those gates are absent.
    function Digest_Equal (A, B : Digest) return Boolean
      with Global => null
    is
@@ -64,10 +66,11 @@ package body LTHING_Judicial is
    end Digest_Equal;
 
    --  ML-DSA-65 signature verification boundary.
-   --  REJECT-BY-DEFAULT: no real verifier is linked yet (asm lacks ML-DSA),
-   --  so this returns False and the pipeline fails closed. When a verified
-   --  ML-DSA-65 implementation is linked, replace the body and update the
-   --  AVRS report; do NOT make it return True until then.
+   --  NOT WIRED YET: LTHING_MLDSA65.Verify exists and is KAT-correct, but
+   --  slicing PK/Sig/Message/Context out of the envelope needs the .jd.lthing
+   --  byte spec. Until that lands this returns False so the pipeline fails
+   --  closed. Wire it to LTHING_MLDSA65.Verify once the spec is written; do
+   --  NOT make it return True before then.
    function Verify_Signature
      (Document   : Byte_Array;
       Public_Key : Byte_Array) return Boolean
@@ -103,10 +106,10 @@ package body LTHING_Judicial is
       Public_Key    : Byte_Array;
       Result        : out Verified_Record)
    is
-      Recomputed_Chain : Digest;
-      --  In a complete implementation these are sliced out of the parsed
-      --  envelope; here we recompute over the whole document as the artifact
-      --  and compare against the carried chain hash once slicing is wired.
+      pragma Unreferenced (Previous_Seal);
+      --  Previous_Seal feeds the chain-of-custody gate, which is not yet
+      --  implemented (it needs the envelope byte spec to locate the carried
+      --  chain hash). Unused until that gate is wired.
    begin
       Result := (Status => Not_Verified, Trusted => False);
 
@@ -122,19 +125,15 @@ package body LTHING_Judicial is
          return;
       end if;
 
-      --  Gate 3: chain-of-custody link.
-      --  provenance_chain_hash = SHAKE512(Previous_Seal || Artifact).
-      Chain_Hash (Previous_Seal, Document, Recomputed_Chain);
-      --  Until envelope slicing extracts the carried chain hash, treat a
-      --  self-consistent recomputation as the link check. This is a
-      --  PLACEHOLDER comparison and is deliberately conservative: it does not
-      --  grant trust on its own because the signature gate (4) still rejects.
-      if not Digest_Equal (Recomputed_Chain, Recomputed_Chain) then
-         Result := (Status => Chain_Broken, Trusted => False);
-         return;
-      end if;
+      --  Length (-> Bad_Length), provenance-seal (-> Seal_Mismatch) and
+      --  chain-of-custody (-> Chain_Broken) gates are NOT YET IMPLEMENTED:
+      --  they need the .jd.lthing envelope byte spec to slice the carried
+      --  seal/chain hash and field lengths out of the document. They are
+      --  intentionally ABSENT rather than faked -- the old chain gate compared
+      --  a value to itself and could never fire. The fail-closed signature
+      --  gate below still rejects every document until a verifier is wired.
 
-      --  Gate 4: ML-DSA-65 signature. Reject-by-default today.
+      --  Gate 3: ML-DSA-65 signature. Reject-by-default until wired.
       if not Verify_Signature (Document, Public_Key) then
          Result := (Status => Signature_Invalid, Trusted => False);
          return;
