@@ -10,10 +10,10 @@
 --          ||z||_inf < gamma1 - beta
 --      AND c_tilde2 = c_tilde AND popcount(h) <= omega.
 --
---  Composes the SPARK_Mode (Off) NTT / sampling layers (in-place transforms,
---  C-free pure-Ada Keccak), so this body is SPARK_Mode (Off). The field layer
---  it leans on is proved; AoRTE for the whole project is unaffected because
---  gnatprove treats an Off body as not-analyzed (its spec contract still holds).
+--  SPARK_Mode (On) throughout (NTT / sampling layers included); the proof
+--  target is AoRTE + flow. Earlier this body and the NTT/sample units were
+--  SPARK_Mode (Off) and leaned on the KAT alone; that exclusion is removed so
+--  gnatprove actually analyzes the verifier arithmetic rather than skipping it.
 --
 --  Fail-closed is preserved: any decode failure, malformed hint, norm overflow,
 --  challenge mismatch, or excess hint weight returns False. Verify only returns
@@ -22,7 +22,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);
+pragma SPARK_Mode (On);
 
 with LTHING_Keccak;       use LTHING_Keccak;
 with LTHING_MLDSA_Field;

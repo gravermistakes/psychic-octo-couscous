@@ -14,7 +14,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);
+pragma SPARK_Mode (On);
 
 with LTHING_Keccak;      use LTHING_Keccak;
 with LTHING_MLDSA_Field; use LTHING_MLDSA_Field;

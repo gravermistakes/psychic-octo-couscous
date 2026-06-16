@@ -13,8 +13,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);   --  in-place butterfly mutation; tested not proved
-                           --  (the field ops it calls ARE proved, Part 1)
+pragma SPARK_Mode (On);
 
 with Interfaces;          use Interfaces;
 with LTHING_MLDSA_Field;  use LTHING_MLDSA_Field;

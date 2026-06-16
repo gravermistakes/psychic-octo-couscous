@@ -11,7 +11,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);   --  calls C-FFI Keccak; tested via KAT downstream
+pragma SPARK_Mode (On);
 
 with Interfaces;          use Interfaces;
 with LTHING_MLDSA_NTT;    use LTHING_MLDSA_NTT;

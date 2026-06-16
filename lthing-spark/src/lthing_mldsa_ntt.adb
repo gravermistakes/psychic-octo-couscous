@@ -4,7 +4,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);
+pragma SPARK_Mode (On);
 
 package body LTHING_MLDSA_NTT is
 
