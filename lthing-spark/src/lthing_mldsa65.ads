@@ -64,14 +64,21 @@ package LTHING_MLDSA65 is
    --  True implies a genuine FIPS 204 acceptance) because the arithmetic core
    --  is stubbed. We CAN and do guarantee the safety direction: while the
    --  core is incomplete, Verify returns False unconditionally.
+   --  FIPS 204 Algorithm 3 (ML-DSA.Verify), external/pure interface.
+   --  Context is the application context string (length 0 .. 255). The
+   --  verifier forms the external prefix  M' = 0x00 || len(ctx) || ctx ||
+   --  Message  internally (Alg. 3) before hashing into mu.
    function Verify
      (PK      : Public_Key;
       Message : Byte_Array;
+      Context : Byte_Array;
       Sig     : Signature) return Boolean
      with Global => null,
-          Pre    => Message'Length > 0;
+          Pre    => Message'Length > 0 and then Context'Length <= 255;
 
    --  Exposed so the judicial layer and tests can assert the current posture.
-   Arithmetic_Core_Complete : constant Boolean := False;
+   --  Flipped to True now that the FIPS 204 arithmetic core (Alg. 8) is
+   --  implemented and passes the 15-vector ML-DSA-65 sigVer KAT.
+   Arithmetic_Core_Complete : constant Boolean := True;
 
 end LTHING_MLDSA65;

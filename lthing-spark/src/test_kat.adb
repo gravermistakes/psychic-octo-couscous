@@ -52,28 +52,26 @@ procedure Test_KAT is
 
    --  Run one KAT vector through the verifier and apply the gate.
    procedure Run (Id : Natural; V : M.Vector) is
-      --  M' = 0x00 || len(ctx) || ctx || msg  (FIPS 204 external/pure).
-      --  Ctx_Len is 0 .. 255 across all 15 vectors, so it fits in one byte;
-      --  M' therefore always has length >= 2, satisfying Verify's
-      --  Pre => Message'Length > 0.
-      Msg_Prime : Byte_Array (0 .. V.Msg_Len + V.Ctx_Len + 1) :=
-        (others => 0);
+      --  T10 added a dedicated Context parameter to Verify; the verifier now
+      --  forms M' = 0x00 || len(ctx) || ctx || msg internally (FIPS 204
+      --  Alg. 3). We pass Message and Context straight through. Both V.Msg and
+      --  V.Ctx are 1-based (1 .. Len); Verify uses 'First, so the bounds carry.
+      Msg : Byte_Array (0 .. (if V.Msg_Len = 0 then 0 else V.Msg_Len - 1));
+      Ctx : Byte_Array (0 .. (if V.Ctx_Len = 0 then 0 else V.Ctx_Len - 1));
 
       Result : Boolean;
    begin
-      --  V.Ctx / V.Msg are 1-based (1 .. Len); M' is 0-based.
-      Msg_Prime (0) := 0;
-      Msg_Prime (1) := Byte (V.Ctx_Len);
-      for I in 1 .. V.Ctx_Len loop
-         Msg_Prime (1 + I) := V.Ctx (I);
-      end loop;
       for I in 1 .. V.Msg_Len loop
-         Msg_Prime (1 + V.Ctx_Len + I) := V.Msg (I);
+         Msg (I - 1) := V.Msg (I);
+      end loop;
+      for I in 1 .. V.Ctx_Len loop
+         Ctx (I - 1) := V.Ctx (I);
       end loop;
 
       Result := LTHING_MLDSA65.Verify
                   (PK      => V.PK,
-                   Message => Msg_Prime,
+                   Message => Msg,
+                   Context => Ctx (0 .. V.Ctx_Len - 1),
                    Sig     => V.Sig);
 
       if LTHING_MLDSA65.Arithmetic_Core_Complete then
