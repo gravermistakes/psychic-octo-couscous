@@ -27,26 +27,54 @@ package body LTHING_Judicial is
    --  Internal helpers (all pure, all fail-closed).
    ---------------------------------------------------------------------------
 
-   --  Envelope shape: must contain the document-body and seal markers.
-   --  Minimal here; the real byte-scan is elaborated as the format stabilizes.
+   --  Fixed LTHING header (spec §2). Every envelope opens with this exact
+   --  10-byte preamble (§2.1), then the 3-byte doctype block (§2.2/§2.3) and a
+   --  version byte (§2.4). On the wire, the JD v1.0 prefix is:
+   --    00 00 00 0B 0D EE D0 00 00 00  04 A4 40  10
+   --    └────── preamble (10 B) ─────┘ └ JD──┘  └ver┘
+   Preamble : constant Byte_Array (0 .. 9) :=
+     (16#00#, 16#00#, 16#00#, 16#0B#, 16#0D#, 16#EE#, 16#D0#,
+      16#00#, 16#00#, 16#00#);
+
+   --  JD doctype block, bytes 10..12. Byte 10 is the doctype high byte and
+   --  equals Judicial_DocType (0x04); bytes 11..12 carry 'D' + the null
+   --  terminator nibble (§2.5 nibble reconciliation).
+   JD_DocType_B11 : constant := 16#A4#;
+   JD_DocType_B12 : constant := 16#40#;
+
+   --  Fixed header prefix length through the version byte (§2.5). The §3
+   --  post-version fields (crypto suite, content length, provenance chain
+   --  hash, signature, seal) are still "TO BE SPECIFIED" in the format spec,
+   --  so this floor is the most we can require today; it rises once §3 lands.
+   Header_Prefix_Bytes : constant := 14;
+
+   --  Envelope shape: must at least carry the fixed §2 header prefix.
    function Envelope_Ok (Document : Byte_Array) return Boolean
      with Global => null
    is
    begin
-      --  A judicial envelope cannot be smaller than its fixed 48-byte header.
-      return Document'Length >= 48;
+      return Document'Length >= Header_Prefix_Bytes;
    end Envelope_Ok;
 
-   --  Magic/DocType check (spec Section 8.3: doctype 0x0004 at the documented
-   --  offset). Stubbed against the header layout; returns False if absent.
+   --  Magic / doctype check (spec §2). Validates the exact 10-byte preamble
+   --  and the JD doctype block (bytes 10..12 = 04 A4 40). This is the real
+   --  format gate. NOTE: the doctype high byte lives at offset 10, NOT offset
+   --  9 — offset 9 is part of the fixed null preamble and is always 0x00.
    function Magic_Ok (Document : Byte_Array) return Boolean
      with Global => null
    is
    begin
-      --  DocType byte position per Section 3 header layout (offset 9 of the
-      --  10-byte Magic & DocType field in the example envelopes).
-      return Document'Length >= 10
-        and then Natural (Document (Document'First + 9)) = Judicial_DocType;
+      if Document'Length < Header_Prefix_Bytes then
+         return False;
+      end if;
+      for I in Preamble'Range loop
+         if Natural (Document (Document'First + I)) /= Natural (Preamble (I)) then
+            return False;
+         end if;
+      end loop;
+      return Natural (Document (Document'First + 10)) = Judicial_DocType
+        and then Natural (Document (Document'First + 11)) = JD_DocType_B11
+        and then Natural (Document (Document'First + 12)) = JD_DocType_B12;
    end Magic_Ok;
 
    --  Constant-time digest equality via the asm primitive.
