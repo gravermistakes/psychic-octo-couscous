@@ -33,7 +33,11 @@ package body LTHING_MLDSA_NTT is
    type Zeta_Table is array (Zeta_Index) of Fq;
 
    --  Compute zetas[i] = zeta^brv(i) mod q, i in 0..255, at elaboration time.
-   function Compute_Zetas return Zeta_Table is
+   --  Global => null makes Zetas a constant WITHOUT variable input (not SPARK
+   --  state), so callers like Verify need not list it in their Global aspect.
+   function Compute_Zetas return Zeta_Table
+     with Global => null
+   is
       Result : Zeta_Table;
       Acc    : Fq;
       E      : Natural;
