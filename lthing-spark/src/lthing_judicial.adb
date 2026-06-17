@@ -18,8 +18,7 @@
 
 pragma SPARK_Mode (On);
 
-with LTHING_Crypto_FFI; use LTHING_Crypto_FFI;
-with Interfaces.C;      use Interfaces.C;
+with Interfaces; use Interfaces;   --  bitwise or/xor on Byte (Unsigned_8)
 
 package body LTHING_Judicial is
 
@@ -49,20 +48,21 @@ package body LTHING_Judicial is
         and then Natural (Document (Document'First + 9)) = Judicial_DocType;
    end Magic_Ok;
 
-   --  Constant-time digest equality via the asm primitive. Retained as the
-   --  helper the seal (Seal_Mismatch) and chain (Chain_Broken) gates will use
-   --  once the envelope spec lands; not called while those gates are absent.
+   --  Constant-time digest equality in PURE SPARK Ada (no asm FFI). Data-
+   --  independent: XOR-accumulate every byte difference, then test the
+   --  accumulator once. Retained as the helper the seal (Seal_Mismatch) and
+   --  chain (Chain_Broken) gates will use once the envelope spec lands.
+   --  (GNAT does not guarantee a constant-time object-code lowering, but the
+   --  control flow is data-independent -- the standard software mitigation.)
    function Digest_Equal (A, B : Digest) return Boolean
      with Global => null
    is
-      A_Arr : Byte_Array (0 .. 63);
-      B_Arr : Byte_Array (0 .. 63);
+      Acc : Byte := 0;
    begin
       for I in Digest_Index loop
-         A_Arr (I) := A (I);
-         B_Arr (I) := B (I);
+         Acc := Acc or (A (I) xor B (I));
       end loop;
-      return Compare_CT (A_Arr, B_Arr, 64) = 0;
+      return Acc = 0;
    end Digest_Equal;
 
    --  ML-DSA-65 signature verification boundary.
