@@ -12,8 +12,7 @@
 --
 --  SPARK_Mode (On) throughout (NTT / sampling layers included); the proof
 --  target is AoRTE + flow. Earlier this body and the NTT/sample units were
---  SPARK_Mode (Off) and leaned on the KAT alone; that exclusion is removed so
---  gnatprove actually analyzes the verifier arithmetic rather than skipping it.
+--  
 --
 --  Fail-closed is preserved: any decode failure, malformed hint, norm overflow,
 --  challenge mismatch, or excess hint weight returns False. Verify only returns
