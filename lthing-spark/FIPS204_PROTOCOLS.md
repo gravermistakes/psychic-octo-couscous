@@ -71,10 +71,77 @@ Returns ⊥ (→ Verify_internal step 3 `false`) on any of:
 Conformance: `lthing_mldsa_codec.adb` `Sig_Decode` — `:190` (Last<Index or Last>Omega),
 `:204` (JJ>Index and Pos<=Prev), `:220-222` (padding ≠ 0) → all three present, exact. ✓
 
+## Algorithm 29 — SampleInBall(ρ)  +  Alg 14/30/32 (sampling)
+`LTHING_MLDSA_Sample` (`lthing_mldsa_sample.adb`).
+- **Alg 29 SampleInBall**: c←0; sign bits h = BytesToBits(first 8 squeezed bytes),
+  i.e. `h[b] = (s[b/8] >> (b mod 8)) & 1` — `:104` matches (LE per-byte). Loop
+  `i ∈ 256−τ..255 = 207..255` (τ=49) — `:110`. Inner rejection `while j>i` →
+  `exit when J<=I` `:120`. `c_i ← c_j` (`:123`) then `c_j ← (−1)^h[i+τ−256]`
+  (`:124-125`, index `I−207 = i+49−256`); +1→`1`, −1→`q−1` (`:77-78`). XOF=SHAKE256
+  (H), rate 136 `:97`. ✓
+- **Alg 14 CoeffFromThreeBytes**: `z = 2^16·(b2 mod 128) + 2^8·b1 + b0`, reject z≥q
+  — `:164` `B0 + 256*B1 + 65536*(B2 mod 128)`, `:166` `if D < Q_Const`. ✓
+- **Alg 30 RejNTTPoly**: absorb seed, squeeze 3 bytes/iter, accept via Alg 14, fill
+  256 coeffs; output already in NTT domain — `:153-170`. XOF=SHAKE128 (G), rate 168
+  `:141`. ✓
+- **Alg 32 ExpandA**: ρ′ = ρ ∥ IntegerToBytes(s,1) ∥ IntegerToBytes(r,1); A[r,s]←
+  RejNTTPoly(ρ′); r∈0..k−1=0..5, s∈0..ℓ−1=0..4 — `:188-197`, `Seed(32)=byte(s)`,
+  `Seed(33)=byte(r)`. ✓
+- Verdict: **CONFORMANT, no code change.** (Header lists an unreferenced
+  `Count_Nonzero` self-gate helper — benign; gnatprove warns but proves it.)
+
+## Algorithms 35-40 + w1Encode (rounding / hint)
+`LTHING_MLDSA_Round` (`lthing_mldsa_round.adb`). Params (`.ads:35-42`): q=8380417,
+2^d=8192, γ2=261888, 2γ2=523776, m=(q−1)/(2γ2)=16, all match.
+- **mod± def** (FIPS §2 line 626): unique m′∈(−⌈α/2⌉, ⌊α/2⌋]. For even α this is
+  (−α/2, α/2]. `Mod_Pm` `:18-28`: M=R mod A∈[0,A−1]; if M>A/2 → M−A∈(−A/2,0), else
+  M∈[0,A/2]; result in (−A/2, A/2], congruent to R mod A. ✓ (`.ads` Post proves it).
+- **Alg 35 Power2Round**: r0 ← r⁺ mod± 2^d; r1 ← (r⁺−r0)/2^d — `:35-44`
+  (`Low=Mod_Pm(Rr,8192)`, `Hi=(Rr−Low)/8192`). ✓
+- **Alg 36 Decompose**: r0 ← r⁺ mod± 2γ2; if r⁺−r0 = q−1 then r1=0, r0=r0−1 else
+  r1=(r⁺−r0)/2γ2 — `:50-72` exact, both branches. ✓
+- **Alg 37 HighBits / Alg 38 LowBits**: = Decompose(r).r1 / .r0 — `:77-94`. ✓
+- **Alg 40 UseHint**: m=16; if h=1∧r0>0 → (r1+1) mod m; if h=1∧r0≤0 → (r1−1) mod m;
+  else r1 — `:99-111` (`elsif H=1` = h=1∧r0≤0; `(R1−1+M_Bins) mod M_Bins` is the
+  same residue, safe). ✓
+- **w1Encode (Alg 28) + SimpleBitPack (Alg 16)**: w1 coeffs ∈[0,m−1]=[0,15],
+  bitlen(15)=4; IntegerToBits LE (Alg 9) + BitsToBytes LE (Alg 12) ⇒ byte t =
+  w1(2t) + 16·w1(2t+1) (low nibble first). `:116-127` exact. ✓
+- Verdict: **CONFORMANT, no code change.**
+
+## Algorithms 41/42/43 (NTT, NTT⁻¹, BitRev8)  §7.5
+`LTHING_MLDSA_NTT` (`lthing_mldsa_ntt.adb`). ζ=1753 (`ntt.ads:25`); zetas[i]=
+ζ^BitRev8(i) computed at elaboration (`:38-69`), not transcribed.
+- **Alg 43 BitRev8**: `BRV` `:12-28` reverses 8 bits (R:=R*2+(V mod 2); V:=V/2 ×8). ✓
+- **Alg 41 NTT** (Cooley-Tukey): len 128→1 halving; start strides 2·len; m←m+1,
+  z←zetas[m]; t=z·ŵ[j+len], ŵ[j+len]=ŵ[j]−t, ŵ[j]=ŵ[j]+t — `:89-128`, butterfly
+  `:115-117` (`T=Mul(Zeta,A(J+Len)); A(J+Len)=Sub(A(J),T); A(J)=Add(A(J),T)`), K
+  plays m (1..255). ✓
+- **Alg 42 NTT⁻¹** (Gentleman-Sande): len 1→128 doubling; m←m−1, z←−zetas[m];
+  t=w[j]; w[j]=t+w[j+len]; w[j+len]=t−w[j+len]; w[j+len]=z·w[j+len]; then ×f,
+  f=256⁻¹=8347681 — `:137-190`, `Zeta:=Sub(0,Zetas(K))` (negation `:168`), butterfly
+  `:172-175`, `N_Inv=8_347_681` scaling `:144,:187-189`. ✓
+- **Ground-truth gate** (`test_ntt.adb`): Gate B/C assert `INTT(Pointwise(NTT a,NTT b))
+  == Schoolbook_Mul(a,b)` (negacyclic mod x²⁵⁶+1) — the self-validating correctness
+  check; any wrong zeta value/order would break it. Gate A: INTT∘NTT = id.
+- Verdict: **CONFORMANT, no code change.** (Note: root/lthing-spark CLAUDE.md tables
+  call NTT "SPARK Off"; the source is actually `SPARK_Mode (On)` and gnatprove-clean —
+  a stale doc note, outside this loop's scope.)
+
 ## Loop status
 - **N=0 `lthing_mldsa65` (Verify, Alg 3+8): CONFORMANT** (note: redundant ω check in
   final return; fixed stale "stubbed/returns Invalid" header).
 - **N=1 `lthing_mldsa_codec` (sigDecode/HintBitUnpack, Alg 27/21): CONFORMANT** (all
   three ⊥ conditions exact; no correction needed).
-- N=2.. (sample: Alg 29/30/32; round: Alg 36/40; ntt) — pending. All are KAT-validated
-  (sigVer 15/15, incl. 12 reject vectors) + gnatprove 0 unproved; spec cross-check pending.
+- **N=2 `lthing_mldsa_sample` (SampleInBall/RejNTTPoly/ExpandA, Alg 29/14/30/32):
+  CONFORMANT** (no correction needed; all step-by-step exact, KAT 15/15 still green).
+- **N=3 `lthing_mldsa_round` (Power2Round/Decompose/HighBits/LowBits/UseHint/w1Encode,
+  Alg 35/36/37/38/40 + Alg 28/16): CONFORMANT** (no correction needed; mod± and both
+  Decompose branches exact).
+- **N=4 `lthing_mldsa_ntt` (NTT/NTT⁻¹/BitRev8, Alg 41/42/43): CONFORMANT** (no
+  correction needed; Cooley-Tukey forward + Gentleman-Sande inverse exact, f=256⁻¹
+  scaling, validated by the negacyclic-convolution ground-truth gate).
+
+**Loop complete: N=0..4 all CONFORMANT. No code corrections required across the
+entire verification path. Invariants at end: KAT 15/15, run_tests rc=0, gnatprove
+0 unproved (548 checks).**
