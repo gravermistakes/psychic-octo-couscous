@@ -2,3 +2,16 @@
 .claude/*
 !.claude/hooks/
 !.claude/settings.json
+
+# Build output (never commit build artifacts)
+build/
+dist/
+
+# Ada/SPARK object & proof dirs
+obj/
+obj_prove/
+obj_tests/
+
+# Python caches
+__pycache__/
+*.pyc
