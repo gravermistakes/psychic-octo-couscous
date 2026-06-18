@@ -1,6 +1,7 @@
 with LTHING_Types;    use LTHING_Types;
 with LTHING_Judicial; use LTHING_Judicial;
 with Ada.Text_IO;     use Ada.Text_IO;
+with Ada.Command_Line;
 
 procedure Test_Judicial is
    Doc  : Byte_Array (0 .. 99) := (others => 0);
@@ -40,5 +41,7 @@ begin
 
    New_Line;
    if Fails = 0 then Put_Line ("ALL RUNTIME TESTS PASS (matches proven contracts)");
-   else Put_Line ("RUNTIME FAILURES:" & Fails'Image); end if;
+   else Put_Line ("RUNTIME FAILURES:" & Fails'Image);
+        Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+   end if;
 end Test_Judicial;
