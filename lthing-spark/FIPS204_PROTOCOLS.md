@@ -60,8 +60,21 @@ restatement of the Alg-21 weight bound (behaviour-neutral; KAT 15/15). ✓ (with
 - Alg 36 `Decompose`, Alg 40 `UseHint`, `w1Encode` → `LTHING_MLDSA_Round`
 - NTT / NTT⁻¹ → `LTHING_MLDSA_NTT`
 
+## Algorithm 21 — HintBitUnpack(y)  (the fail-closed hint gate)
+Returns ⊥ (→ Verify_internal step 3 `false`) on any of:
+```
+4:  if y[ω+i] < Index or y[ω+i] > ω  then ⊥   ▷ end-pointer non-decreasing AND ≤ ω
+9:  if y[Index-1] ≥ y[Index]          then ⊥   ▷ positions strictly increasing in a poly
+17: if y[i] ≠ 0 (leftover)            then ⊥   ▷ trailing padding must be zero
+```
+ω is enforced HERE (line 4), not in Alg 8 line 13.
+Conformance: `lthing_mldsa_codec.adb` `Sig_Decode` — `:190` (Last<Index or Last>Omega),
+`:204` (JJ>Index and Pos<=Prev), `:220-222` (padding ≠ 0) → all three present, exact. ✓
+
 ## Loop status
-- **N=0 `lthing_mldsa65` (Verify, Alg 3+8): CONFORMANT** (one structural note: redundant
-  ω check in final return; one doc defect: stale "stubbed/returns Invalid" header).
-- N=1.. (codec, sample, round, ntt) — pending subsequent iterations against the
-  sub-algorithm pseudocode (to be appended here as each is read from the source).
+- **N=0 `lthing_mldsa65` (Verify, Alg 3+8): CONFORMANT** (note: redundant ω check in
+  final return; fixed stale "stubbed/returns Invalid" header).
+- **N=1 `lthing_mldsa_codec` (sigDecode/HintBitUnpack, Alg 27/21): CONFORMANT** (all
+  three ⊥ conditions exact; no correction needed).
+- N=2.. (sample: Alg 29/30/32; round: Alg 36/40; ntt) — pending. All are KAT-validated
+  (sigVer 15/15, incl. 12 reject vectors) + gnatprove 0 unproved; spec cross-check pending.
