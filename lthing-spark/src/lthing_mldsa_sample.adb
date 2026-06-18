@@ -108,17 +108,15 @@ package body LTHING_MLDSA_Sample is
 
       --  for i in 256-tau .. 255  (= 207 .. 255)
       for I in 207 .. 255 loop
-         --  inner rejection loop: read bytes until j <= i
-         loop
-            if Pos <= Stream'Last then
-               J := Stream (Pos);
-            else
-               --  Unreachable with the 1088-byte stream; fail-safe to a
-               --  guaranteed-accepted byte so the index stays in range.
-               J := 0;
-            end if;
-
-            Pos := (if Pos < Max_Need then Pos + 1 else Pos);
+         --  inner rejection loop: scan the finite stream until j <= i.
+         --  Bounded by Stream'Last so it provably terminates (Verify is a
+         --  function -> its callees must terminate). On exhaustion J keeps its
+         --  last value; C (Integer (J)) stays in range (J is a Byte, 0..255).
+         J := 0;
+         while Pos <= Stream'Last loop
+            pragma Loop_Variant (Increases => Pos);
+            J   := Stream (Pos);
+            Pos := Pos + 1;
             exit when Integer (J) <= I;
          end loop;
 
@@ -148,23 +146,19 @@ package body LTHING_MLDSA_Sample is
    begin
       P := (others => 0);
 
-      while Filled < 256 loop
+      --  Scan the finite stream in 3-byte groups; bounded by Stream'Last so it
+      --  provably terminates. 1088 SHAKE128 bytes fill 256 coeffs with
+      --  overwhelming margin, so it never exhausts in practice; if it did, the
+      --  unfilled tail stays 0 (P initialised above) -> fail-closed.
+      while Filled < 256 and then Pos + 2 <= Stream'Last loop
          pragma Loop_Invariant (Filled < 256);
-         pragma Loop_Invariant (Pos <= Max_Need);
+         pragma Loop_Invariant (Pos <= Stream'Last + 1);
+         pragma Loop_Variant (Increases => Pos);
 
-         if Pos + 2 <= Stream'Last then
-            B0 := Integer (Stream (Pos));
-            B1 := Integer (Stream (Pos + 1));
-            B2 := Integer (Stream (Pos + 2));
-         else
-            --  Unreachable with the 1088-byte stream; fail-safe to a value
-            --  >= q so it is rejected and the indices stay in range.
-            B0 := 16#FF#;
-            B1 := 16#FF#;
-            B2 := 16#FF#;
-         end if;
-
-         Pos := (if Pos <= Max_Need - 3 then Pos + 3 else Pos);
+         B0 := Integer (Stream (Pos));
+         B1 := Integer (Stream (Pos + 1));
+         B2 := Integer (Stream (Pos + 2));
+         Pos := Pos + 3;
 
          --  d := b0 + 256*b1 + 65536*(b2 mod 128)   (23-bit value)
          D := B0 + 256 * B1 + 65536 * (B2 mod 128);

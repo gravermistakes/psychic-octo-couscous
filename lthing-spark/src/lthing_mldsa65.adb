@@ -72,7 +72,8 @@ package body LTHING_MLDSA65 is
       Sig     : Signature) return Boolean
    is
       --  --- Alg. 3: build M' = 0x00 || len(ctx) || ctx || msg ---
-      M_Prime : Byte_Array (0 .. Message'Length + Context'Length + 1);
+      M_Prime : Byte_Array (0 .. Message'Length + Context'Length + 1) :=
+        (others => 0);
 
       --  --- decode outputs ---
       Rho     : Cod.Rho_Array;
@@ -91,7 +92,7 @@ package body LTHING_MLDSA65 is
       Mu      : Byte_Array (0 .. 63);
       C_Tilde2 : Byte_Array (0 .. C_Tilde_Bytes - 1);
 
-      W1_Bytes : Byte_Array (0 .. K_Dim * 128 - 1);
+      W1_Bytes : Byte_Array (0 .. K_Dim * 128 - 1) := (others => 0);
 
       Hint_Weight : Natural := 0;
    begin
@@ -131,7 +132,7 @@ package body LTHING_MLDSA65 is
               Output => Tr);
 
       declare
-         Tr_Mp : Byte_Array (0 .. 64 + M_Prime'Length - 1);
+         Tr_Mp : Byte_Array (0 .. 64 + M_Prime'Length - 1) := (others => 0);
       begin
          for I in 0 .. 63 loop
             Tr_Mp (I) := Tr (I);
@@ -163,8 +164,10 @@ package body LTHING_MLDSA65 is
       --                            - c_hat o NTT(t1(r) * 2^d) ) ----
       --  Pre-transform z(s) once.
       declare
-         Z_Hat : array (0 .. L_Dim - 1) of FPoly;
-         W1    : array (0 .. K_Dim - 1) of Rnd.Poly;
+         Z_Hat : array (0 .. L_Dim - 1) of FPoly :=
+           (others => (others => 0));
+         W1    : array (0 .. K_Dim - 1) of Rnd.Poly :=
+           (others => (others => 0));
       begin
          for S in 0 .. L_Dim - 1 loop
             for I in FPoly'Range loop
@@ -231,7 +234,7 @@ package body LTHING_MLDSA65 is
 
       --  c_tilde2 := H(mu || w1bytes, 48)
       declare
-         Mu_W1 : Byte_Array (0 .. 64 + W1_Bytes'Length - 1);
+         Mu_W1 : Byte_Array (0 .. 64 + W1_Bytes'Length - 1) := (others => 0);
       begin
          for I in 0 .. 63 loop
             Mu_W1 (I) := Mu (I);

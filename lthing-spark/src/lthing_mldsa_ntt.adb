@@ -93,6 +93,7 @@ package body LTHING_MLDSA_NTT is
          pragma Loop_Invariant (Len * GPL = 128);
          --  Number of groups already fully processed in earlier layers.
          pragma Loop_Invariant (K = GPL - 1);
+         pragma Loop_Variant (Decreases => Len);
          declare
             Start : Natural := 0;
             G     : Natural := 0;   --  group index within layer = Start/(2*Len)
@@ -102,6 +103,7 @@ package body LTHING_MLDSA_NTT is
                pragma Loop_Invariant (Start = G * (2 * Len));
                pragma Loop_Invariant (K = GPL - 1 + G);
                pragma Loop_Invariant (K <= 254);
+               pragma Loop_Variant (Increases => Start);
                --  G < GPL here (Start < 256 = GPL*2*Len), so Start+2*Len <= 256.
                pragma Assert (G < GPL);
                pragma Assert (Start + 2 * Len <= 256);
@@ -147,6 +149,7 @@ package body LTHING_MLDSA_NTT is
          pragma Loop_Invariant (Len * GPL = 128);
          --  Groups not yet processed for this and remaining layers.
          pragma Loop_Invariant (K = 2 * GPL);
+         pragma Loop_Variant (Increases => Len);
          declare
             Start : Natural := 0;
             G     : Natural := 0;   --  group index within layer = Start/(2*Len)
@@ -156,6 +159,7 @@ package body LTHING_MLDSA_NTT is
                pragma Loop_Invariant (Start = G * (2 * Len));
                pragma Loop_Invariant (K = 2 * GPL - G);
                pragma Loop_Invariant (K >= 1);
+               pragma Loop_Variant (Increases => Start);
                --  G < GPL here (Start < 256 = GPL*2*Len), so Start+2*Len <= 256.
                pragma Assert (G < GPL);
                pragma Assert (Start + 2 * Len <= 256);
