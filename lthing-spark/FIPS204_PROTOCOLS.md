@@ -109,6 +109,25 @@ Conformance: `lthing_mldsa_codec.adb` `Sig_Decode` — `:190` (Last<Index or Las
   w1(2t) + 16·w1(2t+1) (low nibble first). `:116-127` exact. ✓
 - Verdict: **CONFORMANT, no code change.**
 
+## Algorithms 41/42/43 (NTT, NTT⁻¹, BitRev8)  §7.5
+`LTHING_MLDSA_NTT` (`lthing_mldsa_ntt.adb`). ζ=1753 (`ntt.ads:25`); zetas[i]=
+ζ^BitRev8(i) computed at elaboration (`:38-69`), not transcribed.
+- **Alg 43 BitRev8**: `BRV` `:12-28` reverses 8 bits (R:=R*2+(V mod 2); V:=V/2 ×8). ✓
+- **Alg 41 NTT** (Cooley-Tukey): len 128→1 halving; start strides 2·len; m←m+1,
+  z←zetas[m]; t=z·ŵ[j+len], ŵ[j+len]=ŵ[j]−t, ŵ[j]=ŵ[j]+t — `:89-128`, butterfly
+  `:115-117` (`T=Mul(Zeta,A(J+Len)); A(J+Len)=Sub(A(J),T); A(J)=Add(A(J),T)`), K
+  plays m (1..255). ✓
+- **Alg 42 NTT⁻¹** (Gentleman-Sande): len 1→128 doubling; m←m−1, z←−zetas[m];
+  t=w[j]; w[j]=t+w[j+len]; w[j+len]=t−w[j+len]; w[j+len]=z·w[j+len]; then ×f,
+  f=256⁻¹=8347681 — `:137-190`, `Zeta:=Sub(0,Zetas(K))` (negation `:168`), butterfly
+  `:172-175`, `N_Inv=8_347_681` scaling `:144,:187-189`. ✓
+- **Ground-truth gate** (`test_ntt.adb`): Gate B/C assert `INTT(Pointwise(NTT a,NTT b))
+  == Schoolbook_Mul(a,b)` (negacyclic mod x²⁵⁶+1) — the self-validating correctness
+  check; any wrong zeta value/order would break it. Gate A: INTT∘NTT = id.
+- Verdict: **CONFORMANT, no code change.** (Note: root/lthing-spark CLAUDE.md tables
+  call NTT "SPARK Off"; the source is actually `SPARK_Mode (On)` and gnatprove-clean —
+  a stale doc note, outside this loop's scope.)
+
 ## Loop status
 - **N=0 `lthing_mldsa65` (Verify, Alg 3+8): CONFORMANT** (note: redundant ω check in
   final return; fixed stale "stubbed/returns Invalid" header).
@@ -119,4 +138,10 @@ Conformance: `lthing_mldsa_codec.adb` `Sig_Decode` — `:190` (Last<Index or Las
 - **N=3 `lthing_mldsa_round` (Power2Round/Decompose/HighBits/LowBits/UseHint/w1Encode,
   Alg 35/36/37/38/40 + Alg 28/16): CONFORMANT** (no correction needed; mod± and both
   Decompose branches exact).
-- N=4 `lthing_mldsa_ntt` (Alg 41/42; negacyclic-convolution ground-truth gate) — next.
+- **N=4 `lthing_mldsa_ntt` (NTT/NTT⁻¹/BitRev8, Alg 41/42/43): CONFORMANT** (no
+  correction needed; Cooley-Tukey forward + Gentleman-Sande inverse exact, f=256⁻¹
+  scaling, validated by the negacyclic-convolution ground-truth gate).
+
+**Loop complete: N=0..4 all CONFORMANT. No code corrections required across the
+entire verification path. Invariants at end: KAT 15/15, run_tests rc=0, gnatprove
+0 unproved (548 checks).**
