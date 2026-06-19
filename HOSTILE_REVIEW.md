@@ -9,9 +9,26 @@
 > retired, and the "306 checks / 0 unproved" headline is **rigged** (the verifier
 > core is excluded from analysis). Findings ranked; each has a fix guide below.
 >
-> Format-dependent fixes (C1/C2/H4-seal) are **BLOCKED on J's `.jd.lthing` byte
-> spec** — guide says exactly what to do once it lands. Everything else is
-> independently fixable now.
+> Format-dependent fixes (C1/C2/H4-seal) needed the `.jd.lthing` byte layout.
+> That layout is now in-repo (`lthing-spark/LTHING_HEADER_SPEC.md`, §3/§5/§6/§9);
+> there is no external/"J" dependency — that was a misattribution. See the
+> STATUS UPDATE below for what has since been wired.
+>
+> ## STATUS UPDATE (2026-06-19)
+> Resolved since this review was written:
+> - **C1 wired:** `Parse_And_Verify` now parses the §3 header, validates section
+>   geometry, recomputes the §5 seal hashes, and verifies the §6 ML-DSA-65
+>   signature over `header‖body‖seal` — fail-closed at the first failing §9 gate.
+>   `Verify_Signature`'s `return False` stub is gone. (`test_judicial` T9–T13.)
+> - **C2 real chain gate:** the `Digest_Equal(X,X)` tautology is gone; ChainHash
+>   is recomputed as `SHAKE512(prev_chain ‖ artifact)` and compared (`Chain_Broken`).
+> - **C3 SPARK On:** `lthing_mldsa65`/`_ntt`/`_sample` are now `SPARK_Mode (On)`.
+> - **H4 statuses live:** `Bad_Length`, `Seal_Mismatch`, `Chain_Broken` are now
+>   assigned by real gates.
+> - **H6 asm retired / M8 empty-msg:** `Digest_Equal` is pure-Ada XOR; the
+>   empty-message precondition was dropped.
+> Still open: a *Verified* end-to-end test needs a signer (Sign unimplemented),
+> and §9.11 AEAD applies only to future suites.
 
 ---
 

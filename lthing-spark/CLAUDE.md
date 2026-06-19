@@ -10,11 +10,10 @@ no frozen vectors, "done = builds + tests pass + 0 unproved").
 | `lthing_types` | On | `Byte`, bounded `Byte_Array` (0..1 MiB), `Digest` (64B), `Verified_Record` + predicate |
 | `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. **Proved (51 checks, 0 unproved).** KAT in `test_keccak`. |
 | `lthing_hash` | On | `SHAKE512` (rate 72, domain `0x1F`) + `Chain_Hash`. |
-| `lthing_judicial` | On | `Parse_Unverified` / `Parse_And_Verify` (fail-closed; postconditions proved). |
-| `lthing_crypto_ffi` | On (decls) | asm FFI; bodies SPARK_Off. Being retired from the hash path. |
+| `lthing_judicial` | On | `Parse_And_Verify` — full LTHING envelope verify (§2/§3/§5/§6/§9 of `LTHING_HEADER_SPEC.md`): header geometry, seal-hash recompute, ML-DSA-65 signature over `header‖body‖seal`; fail-closed, postconditions + AoRTE proved. `Digest_Equal` is pure-Ada XOR (asm FFI retired). |
 | `lthing_mldsa_field` | On | Z_q arithmetic (proved). |
-| `lthing_mldsa_ntt` | Off | NTT (tested via convolution gate). |
-| `lthing_mldsa65`, `lthing_mldsa_sample` | — | spec-only stubs (no body yet). |
+| `lthing_mldsa_ntt` | On | NTT/INTT (proved AoRTE; correctness via negacyclic-convolution gate). |
+| `lthing_mldsa65`, `lthing_mldsa_sample` | On | Full ML-DSA-65 Verify (Alg 3/8) + samplers; body present, KAT-validated (15/15), gnatprove-clean. |
 
 ## Keccak/SHAKE API (use this, not the FFI)
 ```ada
