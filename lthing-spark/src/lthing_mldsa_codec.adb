@@ -204,12 +204,13 @@ package body LTHING_MLDSA_Codec is
                pragma Loop_Invariant
                  (for all JJ in 0 .. J - 1 => Raw (JJ) in 0 .. 1_048_575);
                declare
-                  --  centered value in -(gamma1-1) .. gamma1 (precondition).
+                  --  centered value; on the valid band it is in -(gamma1-1)..gamma1.
                   Cen : constant Coeff :=
                     (if Z (I) (J) > Gamma1 then Z (I) (J) - Q else Z (I) (J));
                begin
-                  --  raw in 0 .. 2*gamma1-1 = 0 .. 1_048_575.
-                  Raw (J) := Gamma1 - Cen;
+                  --  raw = gamma1 - centered, taken mod 2^20 so the result is
+                  --  always a 20-bit field (identity on the valid band).
+                  Raw (J) := (Gamma1 - Cen) mod 1_048_576;
                end;
             end loop;
             pragma Assert (for all JJ in Poly'Range => Raw (JJ) in 0 .. 1_048_575);

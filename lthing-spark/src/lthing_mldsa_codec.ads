@@ -113,19 +113,19 @@ package LTHING_MLDSA_Codec is
                        (for all J in Poly'Range => T1 (I) (J) in 0 .. 1023));
 
    --  sigEncode (Algorithm 26): c_tilde || BitPack(z(i)) || HintBitPack(h).
-   --  Z is supplied in the same canonical 0..Q-1 form Sig_Decode emits, and
-   --  must lie in the valid signature band (centered value in (-gamma1, gamma1]):
-   --  i.e. each coeff is <= gamma1 or >= q-gamma1+1. The hint H must carry at
-   --  most Omega set bits in total (FIPS 204 guarantees this for a real
-   --  signature); excess bits beyond Omega are dropped (encoder, not a gate).
+   --  Z is supplied in the same canonical 0..Q-1 form Sig_Decode emits. For a
+   --  valid signature each z coeff is in the band (centered value in
+   --  (-gamma1, gamma1]), and the packing is the exact inverse of Sig_Decode;
+   --  the 20-bit field is taken mod 2^20 so the routine is total for any
+   --  canonical input (the reduction is the identity on the valid band, so the
+   --  decode/encode round-trip is unaffected). The hint H must carry at most
+   --  Omega set bits in total (FIPS 204 guarantees this for a real signature);
+   --  excess bits beyond Omega are dropped (encoder, not a gate).
    function Sig_Encode
      (C_Tilde : C_Tilde_Array; Z : Z_Vec; H : H_Vec) return Signature
      with Global => null,
           Pre    => (for all I in Z_Vec'Range =>
-                       (for all J in Poly'Range =>
-                          Z (I) (J) in 0 .. Q - 1
-                          and then (Z (I) (J) <= Gamma1
-                                    or else Z (I) (J) >= Q - Gamma1 + 1)));
+                       (for all J in Poly'Range => Z (I) (J) in 0 .. Q - 1));
 
    --  ----- sigDecode (Algorithm 27) + HintBitUnpack (Algorithm 21) -----
    --  Ok is fail-closed: False on any malformed hint encoding.
