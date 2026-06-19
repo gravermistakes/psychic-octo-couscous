@@ -1,10 +1,10 @@
 {
-  "permissions": {
-    "deny": [
-      "Task",
-      "Agent"
-    ]
-  },
+#  "permissions": {
+#    "deny": [
+#      "Task",
+#      "Agent"
+#    ]
+#  },
   "hooks": {
     "SessionStart": [
       {
