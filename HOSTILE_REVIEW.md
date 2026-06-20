@@ -28,20 +28,25 @@
 | H4 | Three dead status codes | **RESOLVED** | `d5dec63` — `Bad_Length`/`Seal_Mismatch`/`Chain_Broken` all assigned |
 | H5 | Constant-time compare untested | **RESOLVED** | `Window_Equal` (CT XOR-accumulate) exercised by `test_judicial` T10/T12/T15/T16; dead `Digest_Equal` removed |
 | H6 | asm not retired | **RESOLVED** | `lthing_crypto_ffi.ads` deleted; no `crypto_asm` in `run_tests.sh` |
-| H7 | Docs assert false things | **PARTIAL** | `lthing-spark/CLAUDE.md` fixed (`d5dec63`); `TEST_COVERAGE_ANALYSIS.md` + `test_kat.adb` header still stale — **OPEN** |
+| H7 | Docs assert false things | **PARTIAL · CRITICAL** | `lthing-spark/CLAUDE.md` fixed (`d5dec63`); `TEST_COVERAGE_ANALYSIS.md` + `test_kat.adb` header still stale — **OPEN** |
 | M8 | Empty-message precondition | **RESOLVED** | `Message'Length > 0` dropped; empty ctx round-trips (`test_sign` T3) |
-| M9 | KAT is thin | **OPEN (partial)** | property gates added (encode round-trip, sign round-trip, tamper); boundary KATs not added |
+| M9 | KAT is thin | **OPEN · CRITICAL** | property gates added (encode round-trip, sign round-trip, tamper); boundary KATs not added |
 | M10 | KAT generator never cross-validated | **MOOT** | `tools/gen_kat_vectors.py` no longer in the repo |
 | M11 | Vacuous `Output'Length = Output'Length` | **MOOT** | lived in the now-deleted `lthing_crypto_ffi.ads` |
-| M12 | Keccak rate/domain pairing unenforced | **OPEN** | `Sponge` still accepts any (rate, domain) |
+| M12 | Keccak rate/domain pairing unenforced | **OPEN · CRITICAL** | `Sponge` still accepts any (rate, domain) |
 | L13 | `test_judicial` never `Set_Exit_Status` | **RESOLVED** | now calls `Set_Exit_Status (Failure)` on any `[FAIL]` |
-| L14 | `Makefile:6` `gprbuild … \|\| true` | **OPEN** | still masks build failures |
-| L15 | SHAKE512/Chain_Hash forbid empty input | **OPEN** | optional; judicial layer has its own non-empty policy |
+| L14 | `Makefile:6` `gprbuild … \|\| true` | **OPEN · CRITICAL** | still masks build failures |
+| L15 | SHAKE512/Chain_Hash forbid empty input | **OPEN · CRITICAL** | judicial layer has its own non-empty policy |
 | L16 | Duplicate rate constant | **MOOT** | lived in the deleted `lthing_crypto_ffi.ads` |
 | L17 | `collaborative_neon_garden.py` in repo | **MOOT** | file no longer present |
 
-**Net:** all CRITICAL + HIGH closed except H7 (partial — two docs still stale).
-OPEN: H7 (docs), M9 (KAT breadth), M12 (Keccak API), L14 (Makefile), L15 (optional).
+**Net:** all originally-CRITICAL + HIGH code findings are closed except the H7
+doc tail. **Severity reclassification (maintainer directive, 2026-06-20):** every
+remaining OPEN item is tracked at **CRITICAL priority** regardless of its original
+tier — nothing ships as "medium" or "low" while unresolved. The open set is
+therefore: **H7** (docs), **M9** (KAT breadth), **M12** (Keccak rate/domain),
+**L14** (Makefile `|| true`), **L15** (empty-input hashing). The original tier
+labels (M*/L*) are retained only as stable identifiers, not as severity.
 
 ---
 
@@ -181,10 +186,11 @@ The suite runs via `run_tests.sh`, which is already strict.
 ---
 
 ## Suggested remaining order
+All five items below are **CRITICAL priority** (2026-06-20 maintainer directive);
+ordered by effort, not by severity — none is optional.
 1. **Doc honesty (H7 tail):** reconcile `TEST_COVERAGE_ANALYSIS.md` and the
    `test_kat.adb` header to the current code.
 2. **Cheap hardening:** M12 (Keccak rate/domain precondition), L14 (Makefile).
-3. **FIPS breadth:** M9 boundary KATs / property tests; L15 if empty-input
-   hashing is wanted.
+3. **FIPS breadth:** M9 boundary KATs / property tests; L15 empty-input hashing.
 4. Re-run `./run_tests.sh` (green incl. all gates) and
    `gnatprove -P lthing.gpr --level=2` (0 unproved, core included) after each.
