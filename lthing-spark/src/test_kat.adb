@@ -2,27 +2,25 @@
 --  test_kat -- authoritative ML-DSA-65 sigVer KAT gate (FIPS 204).
 --
 --  Drives LTHING_MLDSA65.Verify against the 15 external/pure sigVer vectors
---  (tcId 31..45) emitted into MLDSA_KAT_Vectors from kat/mldsa65_sigver.json
---  by tools/gen_kat_vectors.py. No vector is hand-invented here; every byte
---  comes from that generated package.
+--  (tcId 31..45) sourced from kat/mldsa65_sigver.json and committed verbatim
+--  into the MLDSA_KAT_Vectors package (src/mldsa_kat_vectors.ads). No vector is
+--  hand-invented here; every byte comes from that package.
 --
---  Gate logic (per tasks/kat.md):
+--  Gate logic:
 --    if LTHING_MLDSA65.Arithmetic_Core_Complete then
 --       result must equal the vector's Expected (3 accept / 12 reject);
 --    else  -- arithmetic core stubbed: fail-closed, Verify rejects everything
 --       result must be False for every vector.
---  Today Arithmetic_Core_Complete = False, so this is a NEGATIVE gate:
---  all 15 vectors must report reject => 15 [PASS]. Once T10 lands the full
---  arithmetic core, the same runner becomes the FULL gate against Expected.
+--  Arithmetic_Core_Complete is now True (the FIPS 204 Alg. 8 core is
+--  implemented), so this is the FULL gate: each vector must match Expected.
+--  Result: accepts tcId 31/32/33, rejects 34..45 => 15/15 [PASS].
 --
---  CONTEXT / M' CAVEAT (to reconcile with T10, the verify agent):
---  Verify's signature is presently Verify (PK, Message, Sig) with NO Context
---  parameter. The external/pure FIPS 204 interface mixes the context into the
---  message as the prefix  M' = 0x00 || len(ctx) || ctx || msg  (single-byte
---  context length, 0..255). We construct M' here and pass it as Message. When
---  T10 adds a dedicated Context parameter to Verify, this construction MUST be
---  removed and (PK, Msg, Ctx, Sig) passed through directly -- flagged so the
---  reconciliation is explicit and the gate stays authoritative.
+--  CONTEXT / M' NOTE: Verify now takes a dedicated Context parameter --
+--  Verify (PK, Message, Context, Sig) -- and forms the FIPS 204 prefix
+--  M' = 0x00 || len(ctx) || ctx || msg internally (single-byte context length,
+--  0..255). This runner therefore passes V.Msg and V.Ctx straight through; it
+--  does NOT pre-construct M'. (Earlier revisions, before the Context parameter
+--  landed, built M' here and passed it as Message -- that step is gone.)
 --
 --  Exits non-zero on any failure so a CI/test target fails the build.
 --  GPL-3.0-or-later.
