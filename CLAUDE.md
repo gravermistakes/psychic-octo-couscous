@@ -1,4 +1,4 @@
-# CLAUDE.md — psychic-octo-couscous
+# RENAME TO STARTHERE.md — psychic-octo-couscous
 
 ## What this repo holds
 - `lthing-spark/` — an **Ada/SPARK** implementation of an **ML-DSA-65 (FIPS 204)**
