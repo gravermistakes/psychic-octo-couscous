@@ -32,3 +32,20 @@ gnatprove -P lthing.gpr --level=2 --report=all -j0            # whole project
 gnatprove -P lthing.gpr -u <unit>.adb --level=2 --report=all  # one unit
 ```
 Authoritative KAT values come from NIST site ONLY
+
+## Accuracy loop (how to get the crypto right)
+For every primitive, iterate until the math matches the standard, then gate it
+with an I/O test against authoritative vectors:
+
+1. **Read the spec** — what this unit must compute (project / format spec).
+2. **Check the source** — the existing code and any reference behaviour present.
+3. **Read the official spec** — the authoritative FIPS / NIST text. Never guess a
+   constant, step, or parameter; pull it from the standard.
+4. **Write the math** — implement the arithmetic exactly as the official spec defines.
+5. **Repeat 1–4** until the unit is complete enough to exercise.
+6. **Run an I/O test** — feed authoritative inputs and check outputs against them
+   (the sigVer / hash KAT gate). No self-derived vectors — KATs from the NIST site
+   only (see above).
+
+Only after the I/O test passes is the unit a candidate for "done"
+(builds + all `[PASS]` + `gnatprove` 0 unproved).
