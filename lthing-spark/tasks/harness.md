@@ -1,9 +1,11 @@
 # Agent task: aggregating test runner + Makefile + CI
 
 Read root `CLAUDE.md` and `lthing-spark/CLAUDE.md` first. Toolchain: `gnatmake`/
-`gprbuild` on PATH; `gnatprove` at `/root/.alire/bin`. The asm lib lives at
-`lthing-spark/lib/liblthing_crypto_asm.{so,a}` (test_judicial links it for the
-working `Compare_CT` — do not change that).
+`gprbuild` on PATH; `gnatprove` at `/root/.alire/bin`. NOTE (superseded): the
+x86-64 asm has been **removed** — the build is entirely Ada. `Digest_Equal` is now
+a pure-Ada constant-time compare and `run_tests.sh` links no asm lib; the
+`-llthing_crypto_asm` / `liblthing_crypto_asm` lines in the snippets below are
+historical only.
 
 You create ONLY these three NEW files. Do NOT edit any `src/*.adb`, `lthing.gpr`,
 or other files.

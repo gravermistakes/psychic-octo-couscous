@@ -17,9 +17,8 @@
 
 pragma SPARK_Mode (On);
 
-with LTHING_Hash;       use LTHING_Hash;
-with LTHING_Crypto_FFI; use LTHING_Crypto_FFI;
-with Interfaces.C;      use Interfaces.C;
+with LTHING_Hash; use LTHING_Hash;
+with Interfaces;  use Interfaces;
 
 package body LTHING_Judicial is
 
@@ -77,18 +76,18 @@ package body LTHING_Judicial is
         and then Natural (Document (Document'First + 12)) = JD_DocType_B12;
    end Magic_Ok;
 
-   --  Constant-time digest equality via the asm primitive.
+   --  Constant-time digest equality, pure Ada (no asm, no early exit):
+   --  OR-accumulate the per-byte XOR so the loop runs the full 64 bytes
+   --  regardless of where a difference occurs.
    function Digest_Equal (A, B : Digest) return Boolean
      with Global => null
    is
-      A_Arr : Byte_Array (0 .. 63);
-      B_Arr : Byte_Array (0 .. 63);
+      Diff : Byte := 0;
    begin
       for I in Digest_Index loop
-         A_Arr (I) := A (I);
-         B_Arr (I) := B (I);
+         Diff := Diff or (A (I) xor B (I));
       end loop;
-      return Compare_CT (A_Arr, B_Arr, 64) = 0;
+      return Diff = 0;
    end Digest_Equal;
 
    --  ML-DSA-65 signature verification boundary.

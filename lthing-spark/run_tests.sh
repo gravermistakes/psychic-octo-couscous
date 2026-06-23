@@ -9,19 +9,17 @@ ulimit -s unlimited 2>/dev/null || ulimit -s 65536 2>/dev/null || true
 cd "$(dirname "$0")"
 export PATH=/root/.alire/bin:$PATH
 OBJ=obj_tests; rm -rf "$OBJ"; mkdir -p "$OBJ"
-LIB="$PWD/lib"
 fail=0
 for src in src/test_*.adb; do
   [ -e "$src" ] || continue
   name=$(basename "$src" .adb)
   echo "=== build $name ==="
   if ! gnatmake -q -D "$OBJ" -aIsrc -o "$OBJ/$name" "$src" \
-        -largs -L"$LIB" -llthing_crypto_asm -Wl,-rpath,"$LIB" \
         >"$OBJ/$name.log" 2>&1; then
     echo "[BUILD-FAIL] $name"; sed 's/^/    /' "$OBJ/$name.log"; fail=1; continue
   fi
   echo "=== run $name ==="
-  out=$(LD_LIBRARY_PATH="$LIB" "$OBJ/$name"); rc=$?
+  out=$("$OBJ/$name"); rc=$?
   echo "$out"
   if [ "$rc" -ne 0 ] || grep -q "\[FAIL\]" <<<"$out"; then
     echo "[FAIL] $name (rc=$rc)"; fail=1
