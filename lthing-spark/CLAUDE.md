@@ -10,10 +10,11 @@ SPARK control layer + NIST COMPLIANY CRYPTOGRAPHY IN ADA SPARK
 | `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. **Proved (51 checks, 0 unproved).** KAT in `test_keccak`. |
 | `lthing_hash` | On | `SHAKE512` (rate 72, domain `0x1F`) + `Chain_Hash`. |
 | `lthing_judicial` | On | `Parse_Unverified` / `Parse_And_Verify` (fail-closed; postconditions proved). |
-| `lthing_crypto_ffi` | On (decls) | asm FFI; bodies SPARK_Off. Being retired from the hash path. |
 | `lthing_mldsa_field` | On | Z_q arithmetic (proved). |
 | `lthing_mldsa_ntt` | Off | NTT (tested via convolution gate). |
-| `lthing_mldsa65`, `lthing_mldsa_sample` | — | spec-only stubs (no body yet). |
+| `lthing_mldsa65` | Off (body) | FIPS 204 Alg. 3+8 verifier; `Arithmetic_Core_Complete = True`; passes 15-vector KAT. |
+| `lthing_mldsa_sample` | Off | ExpandA + SampleInBall (used by mldsa65 body). |
+| `lthing_mldsa87*` | — | ML-DSA-87 spec-only stubs (no bodies). |
 
 ## Keccak/SHAKE API (use this, not the FFI)
 ```ada
