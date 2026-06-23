@@ -8,13 +8,16 @@
 --    * Count_Nonzero    (self-gate helper)
 --
 --  XOF = one-shot Keccak Sponge (SHAKE128 rate 168 for ExpandA, SHAKE256
---  rate 136 for SampleInBall). Sponge re-derives a consistent prefix, so the
---  "grow on exhaustion" strategy (recompute with double Need) is sound.
+--  rate 136 for SampleInBall). A fixed, generously-sized buffer is squeezed
+--  once; the rejection loops index it under a bounds-guarding loop condition,
+--  so AoRTE holds. The buffers are sized so the FIPS 204 KAT never exhausts
+--  them; a (cryptographically negligible) exhausting stream simply leaves the
+--  unfilled coefficients at 0, which fails closed downstream.
 --
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);
+pragma SPARK_Mode (On);
 
 with LTHING_Keccak;      use LTHING_Keccak;
 with LTHING_MLDSA_Field; use LTHING_MLDSA_Field;
@@ -23,15 +26,27 @@ package body LTHING_MLDSA_Sample is
 
    Q_Const : constant := 8_380_417;   --  FIPS 204 modulus q
 
+   --  Fixed XOF output sizes (see header). 3-byte groups for RejNTTPoly accept
+   --  with probability q/2^23 ~ 0.999, so 256 coeffs need ~770 bytes; 4096 is
+   --  a >5x margin. SampleInBall needs ~70 bytes; 1088 is ample.
+   Rej_Stream_Bytes  : constant := 4096;
+   Ball_Stream_Bytes : constant := 1088;
+
+   type Sign_Bits  is array (0 .. 63) of Integer range 0 .. 1;
+   type Pow2_Table is array (0 .. 7) of Integer;
+
+   Pow2 : constant Pow2_Table := (1, 2, 4, 8, 16, 32, 64, 128);
+
    ---------------------------------------------------------------------------
    --  XOF helper: Output(0 .. Need-1) := Sponge(Seed, Rate, Domain_SHAKE, ..)
-   --  Sponge gives a consistent prefix, so squeezing Need then 2*Need agrees
-   --  on the first Need bytes.
    ---------------------------------------------------------------------------
    function XOF
      (Seed : Byte_Array;
       Rate : Positive;
       Need : Positive) return Byte_Array
+     with Global => null,
+          Pre    => Rate <= 200 and then Need <= Max_Document_Bytes,
+          Post   => XOF'Result'First = 0 and then XOF'Result'Length = Need
    is
       Out_Buf : Byte_Array (0 .. Need - 1);
    begin
@@ -49,6 +64,7 @@ package body LTHING_MLDSA_Sample is
       N : Natural := 0;
    begin
       for I in C'Range loop
+         pragma Loop_Invariant (N <= I);
          if C (I) /= 0 then
             N := N + 1;
          end if;
@@ -70,42 +86,39 @@ package body LTHING_MLDSA_Sample is
      (C_Tilde : Byte_Array;
       C       : out Poly)
    is
-      --  Sign bits h(0..63) from the first 8 stream bytes (Alg. 29 lines 1-5).
-      H : array (0 .. 63) of Integer;
-
-      Pos  : Integer;
-      Need : Positive := 1088;          --  generous initial request
-      J    : Byte;
-
-      --  Grab the stream fresh (Sponge prefix is consistent across sizes).
-      Stream : Byte_Array := XOF (C_Tilde, Rate_SHAKE256, Need);
+      H      : Sign_Bits := (others => 0);
+      Pos    : Natural;
+      J      : Byte;
+      Stream : constant Byte_Array :=
+        XOF (C_Tilde, Rate_SHAKE256, Ball_Stream_Bytes);
+      --  Stream'First = 0, Stream'Last = Ball_Stream_Bytes - 1 = 1087.
    begin
       C := (others => 0);
 
-      --  h(b) = (s(b/8) / 2**(b mod 8)) mod 2, for b in 0..63.
+      --  Sign bits h(b) from the first 8 stream bytes (Alg. 29 lines 1-5).
       for B in 0 .. 63 loop
-         H (B) := (Integer (Stream (B / 8)) / (2 ** (B mod 8))) mod 2;
+         H (B) := (Integer (Stream (B / 8)) / Pow2 (B mod 8)) mod 2;
       end loop;
 
       Pos := 8;                          --  bytes 0..7 consumed as sign bits
 
       --  for i in 256-tau .. 255  (= 207 .. 255)
       for I in 207 .. 255 loop
-         --  inner rejection loop: read bytes until j <= i
-         loop
-            if Pos > Stream'Last then
-               --  exhausted: regrow the stream (consistent prefix).
-               Need   := Need * 2;
-               Stream := XOF (C_Tilde, Rate_SHAKE256, Need);
-            end if;
-            J   := Stream (Pos);
+         --  inner rejection loop: advance until a byte j <= i (Alg. 29).
+         --  Bounded by the fixed stream; the guard makes Stream (Pos) safe.
+         while Pos <= Stream'Last and then Integer (Stream (Pos)) > I loop
+            pragma Loop_Invariant (Pos <= Stream'Last);
+            pragma Loop_Variant (Increases => Pos);
             Pos := Pos + 1;
-            exit when Integer (J) <= I;
          end loop;
 
-         C (I)           := C (Integer (J));
-         C (Integer (J)) :=
-           (if H (I - 207) = 0 then Plus_One else Minus_One);
+         if Pos <= Stream'Last then
+            J   := Stream (Pos);          --  here Integer (J) <= I <= 255
+            Pos := Pos + 1;
+            C (I)           := C (Integer (J));
+            C (Integer (J)) :=
+              (if H (I - 207) = 0 then Plus_One else Minus_One);
+         end if;
       end loop;
    end Sample_In_Ball;
 
@@ -116,30 +129,31 @@ package body LTHING_MLDSA_Sample is
    procedure Rej_NTT_Poly
      (Seed : Byte_Array;
       P    : out Poly)
+     with Global => null
    is
-      Need   : Positive := 1088;
-      Stream : Byte_Array := XOF (Seed, Rate_SHAKE128, Need);
-      Pos    : Integer := 0;
-      Filled : Natural := 0;
-      D      : Integer;
+      Stream : constant Byte_Array :=
+        XOF (Seed, Rate_SHAKE128, Rej_Stream_Bytes);
+      --  Stream'First = 0, Stream'Last = Rej_Stream_Bytes - 1 = 4095.
+      Pos        : Natural := 0;
+      Filled     : Natural := 0;
+      D          : Integer;
       B0, B1, B2 : Integer;
    begin
       P := (others => 0);
 
-      while Filled < 256 loop
-         if Pos + 2 > Stream'Last then
-            --  not enough bytes for a 3-byte group: regrow.
-            Need   := Need * 2;
-            Stream := XOF (Seed, Rate_SHAKE128, Need);
-            --  Pos stays valid because the prefix is consistent.
-         end if;
+      --  Each iteration consumes a 3-byte group; the guard keeps Pos, Pos+1,
+      --  Pos+2 within the buffer and Filled within 0 .. 255.
+      while Filled < 256 and then Pos + 2 <= Stream'Last loop
+         pragma Loop_Invariant (Filled <= 255);
+         pragma Loop_Invariant (Pos + 2 <= Stream'Last);
+         pragma Loop_Variant (Increases => Pos);
 
          B0 := Integer (Stream (Pos));
          B1 := Integer (Stream (Pos + 1));
          B2 := Integer (Stream (Pos + 2));
          Pos := Pos + 3;
 
-         --  d := b0 + 256*b1 + 65536*(b2 mod 128)   (23-bit value)
+         --  d := b0 + 256*b1 + 65536*(b2 mod 128)   (23-bit value in 0..2^23-1)
          D := B0 + 256 * B1 + 65536 * (B2 mod 128);
 
          if D < Q_Const then
@@ -159,11 +173,10 @@ package body LTHING_MLDSA_Sample is
      (Rho : Byte_Array;
       A   : out Matrix)
    is
-      Seed : Byte_Array (0 .. 33);
+      Seed : Byte_Array (0 .. 33) := (others => 0);
    begin
       for R in 0 .. 5 loop
          for S in 0 .. 4 loop
-            --  rho is the first 32 bytes
             for I in 0 .. 31 loop
                Seed (I) := Rho (Rho'First + I);
             end loop;

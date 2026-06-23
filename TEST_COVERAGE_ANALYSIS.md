@@ -25,9 +25,9 @@
 | `lthing_hash.ads/.adb` | On | yes | SHAKE512 + `Chain_Hash` |
 | `lthing_judicial.ads/.adb` | On | yes | `Parse_Unverified` / `Parse_And_Verify` |
 | `lthing_mldsa_field.ads/.adb` | On | yes | `Add/Sub/Mul/Reduce/To_Centered` |
-| `lthing_mldsa_ntt.ads/.adb` | **Off** | yes | NTT / INTT / pointwise / schoolbook |
-| `lthing_mldsa65.ads` | On | **no body** | `Verify` (returns False — stub) |
-| `lthing_mldsa_sample.ads` | Off | **no body** | ExpandA + SampleInBall (blocked) |
+| `lthing_mldsa_ntt.ads/.adb` | **On** | yes | NTT / INTT / pointwise / schoolbook (AoRTE proved) |
+| `lthing_mldsa65.ads/.adb` | On | yes | `Verify` (real FIPS 204 Alg. 3+8; AoRTE proved; KAT 15/15) |
+| `lthing_mldsa_sample.ads/.adb` | On | yes | ExpandA + SampleInBall (AoRTE proved; fixed-buffer rejection) |
 
 ### Tests that exist
 
@@ -37,11 +37,12 @@
 
 ### Proof coverage (complementary to tests)
 
-Verified by re-running `gnatprove --level=2` on the real project (not quoting
-the report): **80 checks across 11 units, 0 unproved, 0 justified** — 37
-run-time checks, 12 functional contracts, 13 data-dependencies, 9 termination,
-7 initialization, 2 assertions. (The `PROOF_REPORT.md` "14 VCs" line was a
-hand-count of a subset; the tool reports 80.) This covers every field op's
+Verified by re-running `gnatprove -P lthing.gpr --level=2 --report=all -j0` on
+the real project (not quoting the report): **588 checks, 0 unproved, 0
+justified** — 310 run-time checks, 95 assertions, 43 functional contracts, 38
+data-dependencies, 68 initialization, 34 termination. Every library unit is now
+`SPARK_Mode (On)` and in proof scope (the NTT, sampler, and ML-DSA-65 verifier
+were previously `Off`/unanalyzed). This covers every field op's
 canonical-range postcondition, the `Verified_Record`
 `Trusted = (Status = Verified)` predicate at every assignment, and both
 judicial fail-closed postconditions. The three runtime suites were likewise
@@ -154,20 +155,21 @@ unblocked. **But the regression that proves this lives nowhere in the repo:**
 **3.2 `lthing_judicial`: three status codes are unreachable or untested.**
 `test_judicial` covers `Bad_Envelope`, `Signature_Invalid`, the
 `Parse_Unverified` no-trust guarantee, and the invariant — good. But:
-- **`Bad_Magic` is never exercised.** T2 sets `Doc(9)=0x04` (passes magic, fails
-  at signature); T3 is too short (fails envelope *before* magic). No test feeds
-  a long-enough doc with a *wrong* doctype byte. Add one.
-- **`Chain_Broken` is unreachable code.** The gate is
-  `Digest_Equal(Recomputed_Chain, Recomputed_Chain)` (`lthing_judicial.adb:703`)
-  — a tautology that can never be false. The branch can't be tested because it
-  can't be hit; this is a real correctness gap, not just a coverage gap. Once
-  the carried chain-hash is sliced from the envelope, add a tampered-chain
-  vector that drives `Chain_Broken`.
-- **`Seal_Mismatch` and `Bad_Length` are never assigned anywhere.** They are in
-  the `Verify_Status` enum with no producing path and no test. Either wire the
-  gates that produce them or document them as reserved.
-- **`Parse_Unverified` is only tested on a valid-length doc** — its own
-  `Bad_Envelope` branch (too-short input) is untested.
+- **`Bad_Magic` — DONE.** `test_judicial` T4/T5/T6 feed a long-enough doc with a
+  corrupted doctype byte, a corrupted preamble, and the legacy offset-9 fake
+  header; all are rejected as `Bad_Magic`.
+- **`Chain_Broken` — DONE (gate is now real).** The §3 layout was specified, so
+  the chain gate now compares the carried `provenance_chain_hash`
+  (`Document[14..77]`) against `SHAKE512(Previous_Seal || content)`; it is no
+  longer the `Digest_Equal(X, X)` tautology. `Digest_Equal`'s equal branch is
+  exercised positively by T9 (a runtime-correct chain hash makes the gate pass,
+  so the signature gate is the one that rejects).
+- **`Bad_Length` — DONE.** A doc that passes magic but is shorter than the §3
+  minimum (3388 B) is rejected as `Bad_Length` (`test_judicial` T2).
+  `Seal_Mismatch` remains reserved (no separate seal field in the current
+  layout); documented as such.
+- **`Parse_Unverified` short input — DONE.** T10 drives its `Bad_Envelope`
+  branch with a 6-byte doc.
 - All judicial tests use synthetic zero-filled buffers; **no golden `.jd.lthing`
   envelope** is ever parsed.
 
@@ -293,11 +295,17 @@ KAT-gated NTT/Keccak), and the authoritative 15-vector sigVer KAT passes **15/15
 `gnatprove -P lthing.gpr --level=2` = **306 checks, 0 unproved**; `run_tests.sh`
 runs **9/9** suites green and fails the build on any `[FAIL]`.
 
-Remaining work is now the judicial layer, not the crypto: (a) the `.jd.lthing`
-envelope slicing — real `Seal_Mismatch`/`Bad_Length`/chain-hash gates and wiring
-`Verify_Signature` to call `LTHING_MLDSA65.Verify` — is **deferred pending a
-concrete envelope byte spec**; (b) the unreached judicial status codes and the
-tautological `Chain_Broken` branch; (c) the 4–5 other `.lthing` sub-extensions,
-unimplemented; (d) secondary coverage (NTT reference KAT, field boundaries,
-fail-closed fuzz, `gnatcov` numbers). The crypto core — the project's whole
-reason for being — is done and KAT-true.
+The judicial layer is now wired to the crypto: the `.jd.lthing` §3 layout is
+specified (header 0..13, chain hash 14..77, signature 78..3386, content 3387..),
+`Parse_And_Verify` extracts and checks the carried chain hash, enforces
+`Bad_Length`, and calls `LTHING_MLDSA65.Verify` at the signature gate — fail
+closed throughout. Every library unit is `SPARK_Mode (On)`; whole-project
+`gnatprove -P lthing.gpr --level=2` = **588 checks, 0 unproved, 0 justified**
+(the NTT, sampler, and verifier are now in proof scope, AoRTE discharged);
+`run_tests.sh` runs **9/9** suites green (incl. KAT 15/15).
+
+Remaining work: (a) `Seal_Mismatch` is reserved (no separate seal field in the
+current layout); (b) the 4–5 other `.lthing` sub-extensions are unimplemented;
+(c) secondary coverage (NTT reference KAT, field boundaries, fail-closed fuzz,
+`gnatcov` numbers). The crypto core — the project's whole reason for being — is
+done, KAT-true, and now fully proved AoRTE.

@@ -1,20 +1,28 @@
 # CLAUDE.md — lthing-spark (Ada/SPARK layer)
 
-SPARK control layer + NIST COMPLIANY CRYPTOGRAPHY IN ADA SPARK 
+SPARK control layer + NIST COMPLIANT CRYPTOGRAPHY IN ADA SPARK
 
+## SPARK_Mode = On, always
+Every library source unit is `SPARK_Mode (On)`; the proof target is AoRTE +
+flow + stated contracts, and `gnatprove -P lthing.gpr --level=2` reports
+**0 unproved**. Do not introduce `SPARK_Mode (Off)` in `src/*.ad?` library code.
+The only `Off` units are the `src/test_*.adb` harness mains (they drive
+`Ada.Text_IO` / `Ada.Command_Line`, which are outside the proof boundary).
 
 ## Units
 | Unit | SPARK | Role |
 |------|-------|------|
 | `lthing_types` | On | `Byte`, bounded `Byte_Array` (0..1 MiB), `Digest` (64B), `Verified_Record` + predicate |
-| `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. **Proved (51 checks, 0 unproved).** KAT in `test_keccak`. |
+| `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. KAT in `test_keccak`. |
 | `lthing_hash` | On | `SHAKE512` (rate 72, domain `0x1F`) + `Chain_Hash`. |
 | `lthing_judicial` | On | `Parse_Unverified` / `Parse_And_Verify` (fail-closed; postconditions proved). |
-| `lthing_mldsa_field` | On | Z_q arithmetic (proved). |
-| `lthing_mldsa_ntt` | Off | NTT (tested via convolution gate). |
-| `lthing_mldsa65` | Off (body) | FIPS 204 Alg. 3+8 verifier; `Arithmetic_Core_Complete = True`; passes 15-vector KAT. |
-| `lthing_mldsa_sample` | Off | ExpandA + SampleInBall (used by mldsa65 body). |
-| `lthing_mldsa87*` | — | ML-DSA-87 spec-only stubs (no bodies). |
+| `lthing_mldsa_field` | On | Z_q arithmetic (proved, range postconditions). |
+| `lthing_mldsa_ntt` | On | NTT/INTT in-place butterflies (AoRTE proved via K/Len/Start invariants); convolution gate in `test_ntt`. |
+| `lthing_mldsa_codec` | On | pk/sig decode (proved, range postconditions). |
+| `lthing_mldsa_round` | On | rounding / hint layer (proved). |
+| `lthing_mldsa_sample` | On | ExpandA + SampleInBall (AoRTE proved; fixed-buffer rejection sampling). |
+| `lthing_mldsa65` | On | FIPS 204 Alg. 3+8 verifier; `Arithmetic_Core_Complete = True`; passes 15-vector KAT. |
+| `lthing_mldsa87*` | On | ML-DSA-87 spec-only stubs (no bodies yet). |
 
 ## Keccak/SHAKE API (use this, not the FFI)
 ```ada

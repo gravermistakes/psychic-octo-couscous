@@ -74,7 +74,8 @@ package LTHING_MLDSA65 is
       Context : Byte_Array;
       Sig     : Signature) return Boolean
      with Global => null,
-          Pre    => Message'Length > 0 and then Context'Length <= 255;
+          Pre    => Message'Length in 1 .. Max_Document_Bytes - 512
+                    and then Context'Length <= 255;
 
    --  Exposed so the judicial layer and tests can assert the current posture.
    --  Flipped to True now that the FIPS 204 arithmetic core (Alg. 8) is

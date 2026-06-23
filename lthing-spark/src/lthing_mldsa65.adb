@@ -10,10 +10,11 @@
 --          ||z||_inf < gamma1 - beta
 --      AND c_tilde2 = c_tilde AND popcount(h) <= omega.
 --
---  Composes the SPARK_Mode (Off) NTT / sampling layers (in-place transforms,
---  C-free pure-Ada Keccak), so this body is SPARK_Mode (Off). The field layer
---  it leans on is proved; AoRTE for the whole project is unaffected because
---  gnatprove treats an Off body as not-analyzed (its spec contract still holds).
+--  SPARK posture: SPARK_Mode (On). Proof target is AoRTE + flow. It composes
+--  the NTT / sampling / codec / round layers, all now SPARK_Mode (On) and
+--  proved free of run-time errors; the field layer it leans on is proved with
+--  range postconditions. Functional (cryptographic) correctness stays gated by
+--  the 15-vector FIPS 204 sigVer KAT (test_kat.adb).
 --
 --  Fail-closed is preserved: any decode failure, malformed hint, norm overflow,
 --  challenge mismatch, or excess hint weight returns False. Verify only returns
@@ -22,7 +23,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);
+pragma SPARK_Mode (On);
 
 with LTHING_Keccak;       use LTHING_Keccak;
 with LTHING_MLDSA_Field;
@@ -44,7 +45,9 @@ package body LTHING_MLDSA65 is
    Two_Pow_D : constant := 8_192;        --  2^d, d = 13
 
    --  Coeff-wise add over Fq.
-   function Add_Poly (A, B : FPoly) return FPoly is
+   function Add_Poly (A, B : FPoly) return FPoly
+     with Global => null
+   is
       R : FPoly;
    begin
       for I in FPoly'Range loop
@@ -54,7 +57,9 @@ package body LTHING_MLDSA65 is
    end Add_Poly;
 
    --  Coeff-wise sub over Fq.
-   function Sub_Poly (A, B : FPoly) return FPoly is
+   function Sub_Poly (A, B : FPoly) return FPoly
+     with Global => null
+   is
       R : FPoly;
    begin
       for I in FPoly'Range loop
@@ -73,7 +78,8 @@ package body LTHING_MLDSA65 is
       Sig     : Signature) return Boolean
    is
       --  --- Alg. 3: build M' = 0x00 || len(ctx) || ctx || msg ---
-      M_Prime : Byte_Array (0 .. Message'Length + Context'Length + 1);
+      M_Prime : Byte_Array (0 .. Message'Length + Context'Length + 1) :=
+        (others => 0);
 
       --  --- decode outputs ---
       Rho     : Cod.Rho_Array;
@@ -88,11 +94,11 @@ package body LTHING_MLDSA65 is
       C_Poly  : Ntt.Poly;            --  challenge, coeffs in {-1,0,+1}
       C_Hat   : FPoly;
 
-      Tr      : Byte_Array (0 .. 63);
-      Mu      : Byte_Array (0 .. 63);
+      Tr       : Byte_Array (0 .. 63);
+      Mu       : Byte_Array (0 .. 63);
       C_Tilde2 : Byte_Array (0 .. C_Tilde_Bytes - 1);
 
-      W1_Bytes : Byte_Array (0 .. K_Dim * 128 - 1);
+      W1_Bytes : Byte_Array (0 .. K_Dim * 128 - 1) := (others => 0);
 
       Hint_Weight : Natural := 0;
    begin
@@ -132,7 +138,7 @@ package body LTHING_MLDSA65 is
               Output => Tr);
 
       declare
-         Tr_Mp : Byte_Array (0 .. 64 + M_Prime'Length - 1);
+         Tr_Mp : Byte_Array (0 .. 64 + M_Prime'Length - 1) := (others => 0);
       begin
          for I in 0 .. 63 loop
             Tr_Mp (I) := Tr (I);
@@ -160,13 +166,11 @@ package body LTHING_MLDSA65 is
       C_Hat := C_Poly;
       Ntt.NTT (C_Hat);
 
-      --  ---- step 6: w(r) = INTT( sum_s A_hat(r,s) o NTT(z(s))
-      --                            - c_hat o NTT(t1(r) * 2^d) ) ----
-      --  Pre-transform z(s) once.
+      --  ---- steps 6-8: per-row w(r), w1(r) = UseHint(h(r), w(r)), encode ----
       declare
-         Z_Hat : array (0 .. L_Dim - 1) of FPoly;
-         W1    : array (0 .. K_Dim - 1) of Rnd.Poly;
+         Z_Hat : array (0 .. L_Dim - 1) of FPoly := (others => (others => 0));
       begin
+         --  Pre-transform z(s) once.
          for S in 0 .. L_Dim - 1 loop
             for I in FPoly'Range loop
                Z_Hat (S) (I) := Z (S) (I);    --  already canonical 0..Q-1
@@ -176,12 +180,14 @@ package body LTHING_MLDSA65 is
 
          for R in 0 .. K_Dim - 1 loop
             declare
-               Acc    : FPoly := (others => 0);
-               T1d    : FPoly;
+               Acc     : FPoly := (others => 0);
+               T1d     : FPoly;
                T1d_Hat : FPoly;
-               W_Hat  : FPoly;
-               W_Poly : FPoly;
+               W_Hat   : FPoly;
+               W_Poly  : FPoly;
+               W1_R    : Rnd.Poly := (others => 0);
             begin
+               --  w_hat(r) = sum_s A_hat(r,s) o NTT(z(s)) - c_hat o NTT(t1d(r))
                for S in 0 .. L_Dim - 1 loop
                   Acc := Add_Poly (Acc, Ntt.Pointwise (A_Hat (R, S), Z_Hat (S)));
                end loop;
@@ -194,33 +200,33 @@ package body LTHING_MLDSA65 is
                T1d_Hat := T1d;
                Ntt.NTT (T1d_Hat);
 
-               W_Hat := Sub_Poly (Acc, Ntt.Pointwise (C_Hat, T1d_Hat));
-
+               W_Hat  := Sub_Poly (Acc, Ntt.Pointwise (C_Hat, T1d_Hat));
                W_Poly := W_Hat;
                Ntt.Inv_NTT (W_Poly);
 
-               --  ---- step 7: w1(r) = UseHint(h(r), w(r)) ----
+               --  step 7: w1(r) = UseHint(h(r), w(r)); each result in 0..15.
                for I in FPoly'Range loop
-                  W1 (R) (I) := Rnd.Use_Hint (H (R) (I), W_Poly (I));
+                  pragma Loop_Invariant
+                    (for all II in FPoly'First .. I - 1 =>
+                       W1_R (II) <= Rnd.M_Bins - 1);
+                  W1_R (I) := Rnd.Use_Hint (H (R) (I), W_Poly (I));
                end loop;
-            end;
-         end loop;
 
-         --  ---- step 8: w1bytes := W1_Encode over all k polys ----
-         for R in 0 .. K_Dim - 1 loop
-            declare
-               Enc : constant Rnd.W1_Bytes := Rnd.W1_Encode (W1 (R));
-            begin
-               for I in Enc'Range loop
-                  W1_Bytes (R * 128 + I) := Enc (I);
-               end loop;
+               --  step 8: encode this poly's 128 bytes into the right slice.
+               declare
+                  Enc : constant Rnd.W1_Bytes := Rnd.W1_Encode (W1_R);
+               begin
+                  for I in Enc'Range loop
+                     W1_Bytes (R * 128 + I) := Enc (I);
+                  end loop;
+               end;
             end;
          end loop;
       end;
 
       --  c_tilde2 := H(mu || w1bytes, 48)
       declare
-         Mu_W1 : Byte_Array (0 .. 64 + W1_Bytes'Length - 1);
+         Mu_W1 : Byte_Array (0 .. 64 + W1_Bytes'Length - 1) := (others => 0);
       begin
          for I in 0 .. 63 loop
             Mu_W1 (I) := Mu (I);
@@ -252,7 +258,9 @@ package body LTHING_MLDSA65 is
 
       --  (b) hint weight <= omega
       for R in 0 .. K_Dim - 1 loop
+         pragma Loop_Invariant (Hint_Weight <= R * 256);
          for I in Cod.Hint_Poly'Range loop
+            pragma Loop_Invariant (Hint_Weight <= R * 256 + I);
             Hint_Weight := Hint_Weight + Natural (H (R) (I));
          end loop;
       end loop;

@@ -15,7 +15,7 @@
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);   --  calls Keccak sponge; validated via KAT downstream
+pragma SPARK_Mode (On);   --  spec-only; declarations are in SPARK
 
 with Interfaces;          use Interfaces;
 with LTHING_MLDSA_NTT;    use LTHING_MLDSA_NTT;

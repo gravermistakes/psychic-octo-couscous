@@ -10,11 +10,15 @@
 --  convolution gate (NTT(a) o NTT(b) -> INTT == schoolbook negacyclic
 --  product) would fail. That gate is self-validating; no external vectors.
 --
+--  SPARK posture: SPARK_Mode (On). The in-place butterflies are proved free of
+--  run-time errors (AoRTE) — every array index and the zeta-table index are
+--  discharged from loop invariants that pin the K/Len/Start relationship. The
+--  field ops it calls are themselves proved (Part 1).
+--
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
-pragma SPARK_Mode (Off);   --  in-place butterfly mutation; tested not proved
-                           --  (the field ops it calls ARE proved, Part 1)
+pragma SPARK_Mode (On);
 
 with Interfaces;          use Interfaces;
 with LTHING_MLDSA_Field;  use LTHING_MLDSA_Field;
