@@ -2,6 +2,7 @@ with LTHING_MLDSA_NTT;   use LTHING_MLDSA_NTT;
 with LTHING_MLDSA_Field; use LTHING_MLDSA_Field;
 with Interfaces;         use Interfaces;
 with Ada.Text_IO;        use Ada.Text_IO;
+with Ada.Command_Line;
 
 procedure Test_NTT is
    Fails : Natural := 0;
@@ -62,5 +63,7 @@ begin
 
    New_Line;
    if Fails = 0 then Put_Line ("PART 2 GATE PASSED: NTT verified correct via negacyclic convolution");
-   else Put_Line ("PART 2 FAILURES:" & Fails'Image); end if;
+   else Put_Line ("PART 2 FAILURES:" & Fails'Image);
+        Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
+   end if;
 end Test_NTT;

@@ -1,92 +1,150 @@
 ------------------------------------------------------------------------------
 --  LTHING.Judicial (body) — fail-closed .jd.lthing verification
 --
---  Design for provability and safety:
---    * Result starts as (Not_Verified, False) and Trusted is assigned in
---      exactly ONE place — the final line — only after every gate passed.
---    * Every failure path assigns a specific Status and returns immediately
---      with Trusted = False (the type predicate keeps the two consistent).
+--  Verifies a complete LTHING envelope per LTHING_HEADER_SPEC.md:
+--    §2  14-byte magic prefix (preamble + JD doctype + non-zero version)
+--    §3  40-byte fixed header (crypto suite, timestamp, section lengths)
+--    §5  provenance seal (ancestor, artifact hash, chain hash, relation,
+--        signer id, seal id)
+--    §6  ML-DSA-65 signature over header ‖ body ‖ seal
+--    §9  the MUST-gate parser requirements (fail-closed at the first failure)
 --
---  §3 in-document layout (byte offsets from Document'First):
---    [0   .. 13  ]  §2 header prefix (preamble + doctype + version, 14 B)
---    [14  .. 77  ]  carried provenance_chain_hash (64 B = Digest)
---    [78  .. 3386]  ML-DSA-65 signature (3309 B = LTHING_MLDSA65.Sig_Bytes)
---    [3387.. Last]  message / content payload (>= 1 B)
---  Minimum document length: 3388 bytes.  Documents that pass the §2 magic
---  check but are shorter than 3388 bytes are rejected as Bad_Length.
+--  Result starts (Not_Verified, False); Trusted becomes True in exactly ONE
+--  place, only after every §9 gate has passed. Every failure path assigns a
+--  specific Status and returns immediately with Trusted = False (the type
+--  predicate keeps the two consistent). This is the safe inverse of audit
+--  FINDING-002 ("signature stub returns True"): any doubt rejects.
+--
+--  The §3 byte layout is the in-repo source of truth (LTHING_HEADER_SPEC.md),
+--  not a fictional external dependency.
 --
 --  GPL-3.0-or-later.
 ------------------------------------------------------------------------------
 
 pragma SPARK_Mode (On);
 
-with LTHING_Hash;    use LTHING_Hash;
+with Interfaces;    use Interfaces;   --  bitwise or/xor on Byte; Unsigned_*
+with LTHING_Keccak;
 with LTHING_MLDSA65;
-with Interfaces;     use Interfaces;
 
 package body LTHING_Judicial is
 
    ---------------------------------------------------------------------------
-   --  §2 layout constants.
+   --  Fixed format constants (LTHING_HEADER_SPEC.md).
    ---------------------------------------------------------------------------
 
+   --  §2.1 preamble (bytes 0..9), §2.2/§2.5 JD doctype block (bytes 10..12).
    Preamble : constant Byte_Array (0 .. 9) :=
      (16#00#, 16#00#, 16#00#, 16#0B#, 16#0D#, 16#EE#, 16#D0#,
       16#00#, 16#00#, 16#00#);
+   JD_DocType_B10 : constant := 16#04#;     --  offset nibble | 'J' hi
+   JD_DocType_B11 : constant := 16#A4#;     --  'J' lo | 'D' hi
+   JD_DocType_B12 : constant := 16#40#;     --  'D' lo | null terminator
 
-   JD_DocType_B11      : constant := 16#A4#;
-   JD_DocType_B12      : constant := 16#40#;
-   Header_Prefix_Bytes : constant := 14;
+   --  §3 header geometry (all section lengths live in the 40-byte header).
+   Header_Bytes  : constant := 40;
+   Suite_Off     : constant := 14;          --  2 B  crypto suite selector
+   Body_Len_Off  : constant := 24;          --  4 B  body length
+   Seal_Len_Off  : constant := 28;          --  4 B  provenance seal length
+   Sig_Len_Off   : constant := 32;          --  4 B  signature length
+   Aead_Len_Off  : constant := 36;          --  4 B  AEAD tag length
 
-   ---------------------------------------------------------------------------
-   --  §3 layout constants.
-   ---------------------------------------------------------------------------
+   Suite_Baseline : constant := 16#0001#;   --  §3.1 only baseline supported
 
-   Chain_Hash_Offset : constant := Header_Prefix_Bytes;
-   Sig_Offset        : constant := Chain_Hash_Offset + 64;
-   Content_Offset    : constant := Sig_Offset + LTHING_MLDSA65.Sig_Bytes;
-   Min_Sig_Doc_Bytes : constant := Content_Offset + 1;
+   --  §5.1 seal field widths for suite 0x0001 (ArtifactHash = 64).
+   Hash_Bytes    : constant := 64;          --  LTHING SHAKE512 digest
+   --  min seal = ancestor(2)+artifact(64)+chain(64)+relation(1)
+   --             +signerlen(1)+signer(0)+sealid(64) = 196
+   Min_Seal_Bytes : constant := 2 + Hash_Bytes + Hash_Bytes + 1 + 1 + Hash_Bytes;
 
    ---------------------------------------------------------------------------
    --  Internal helpers (all pure, all fail-closed).
    ---------------------------------------------------------------------------
 
+   --  Envelope shape: must at least carry the fixed 40-byte header.
    function Envelope_Ok (Document : Byte_Array) return Boolean
-     with Global => null
+     with Global => null,
+          Post => Envelope_Ok'Result = (Document'Length >= Header_Bytes)
    is
    begin
-      return Document'Length >= Header_Prefix_Bytes;
+      return Document'Length >= Header_Bytes;
    end Envelope_Ok;
 
+   --  Magic / doctype / version gate (§2). Validates the exact 10-byte
+   --  preamble, the JD doctype block (bytes 10..12 = 04 A4 40), and that the
+   --  version byte (byte 13, §2.4) is non-zero (0x00 is RESERVED → reject).
    function Magic_Ok (Document : Byte_Array) return Boolean
      with Global => null
    is
    begin
-      if Document'Length < Header_Prefix_Bytes then
+      if Document'Length < Header_Bytes then
          return False;
       end if;
       for I in Preamble'Range loop
-         if Natural (Document (Document'First + I)) /= Natural (Preamble (I)) then
+         if Document (Document'First + I) /= Preamble (I) then
             return False;
          end if;
       end loop;
-      return Natural (Document (Document'First + 10)) = Judicial_DocType
-        and then Natural (Document (Document'First + 11)) = JD_DocType_B11
-        and then Natural (Document (Document'First + 12)) = JD_DocType_B12;
+      return Document (Document'First + 10) = JD_DocType_B10
+        and then Document (Document'First + 11) = JD_DocType_B11
+        and then Document (Document'First + 12) = JD_DocType_B12
+        and then Document (Document'First + 13) /= 16#00#;
    end Magic_Ok;
 
-   --  Constant-time digest equality, pure Ada (no early exit):
-   --  OR-accumulate per-byte XOR so the loop always runs all 64 bytes.
-   function Digest_Equal (A, B : Digest) return Boolean
+   --  Big-endian readers. Preconditions keep every index in bounds; the
+   --  results are widened so the length arithmetic cannot overflow.
+   function Read_U16 (D : Byte_Array; Off : Index_Range) return Unsigned_16
+     with Global => null,
+          Pre => Off >= D'First and then Off < D'Last
+   is
+   begin
+      return Unsigned_16 (D (Off)) * 256 + Unsigned_16 (D (Off + 1));
+   end Read_U16;
+
+   function Read_U32 (D : Byte_Array; Off : Index_Range) return Unsigned_64
+     with Global => null,
+          Pre  => Off >= D'First and then Off + 3 <= D'Last,
+          Post => Read_U32'Result <= 16#FFFF_FFFF#
+   is
+   begin
+      return Unsigned_64 (D (Off))     * 16#01_00_00_00#
+           + Unsigned_64 (D (Off + 1)) * 16#01_00_00#
+           + Unsigned_64 (D (Off + 2)) * 16#01_00#
+           + Unsigned_64 (D (Off + 3));
+   end Read_U32;
+
+   --  LTHING "SHAKE512": Sponge(rate 72, domain 0x1F, 64-byte output).
+   function LTHING_SHAKE512 (Input : Byte_Array) return Digest
      with Global => null
    is
-      Diff : Byte := 0;
+      Buf : Byte_Array (0 .. 63) := (others => 0);
+      R   : Digest := (others => 0);
    begin
+      LTHING_Keccak.Sponge
+        (Input  => Input,
+         Rate   => LTHING_Keccak.Rate_SHA3_512,
+         Domain => LTHING_Keccak.Domain_SHAKE,
+         Output => Buf);
       for I in Digest_Index loop
-         Diff := Diff or (A (I) xor B (I));
+         R (I) := Buf (I);
       end loop;
-      return Diff = 0;
-   end Digest_Equal;
+      return R;
+   end LTHING_SHAKE512;
+
+   --  Compare a computed digest H against the 64-byte window D(Off .. Off+63),
+   --  constant-time over the 64 bytes.
+   function Window_Equal
+     (H : Digest; D : Byte_Array; Off : Index_Range) return Boolean
+     with Global => null,
+          Pre => Off >= D'First and then Off + (Hash_Bytes - 1) <= D'Last
+   is
+      Acc : Byte := 0;
+   begin
+      for I in 0 .. Hash_Bytes - 1 loop
+         Acc := Acc or (H (I) xor D (Off + I));
+      end loop;
+      return Acc = 0;
+   end Window_Equal;
 
    ---------------------------------------------------------------------------
    --  Parse_Unverified — structural only, never trusted.
@@ -99,12 +157,13 @@ package body LTHING_Judicial is
       if not Envelope_Ok (Document) then
          Result := (Status => Bad_Envelope, Trusted => False);
       else
+         --  Structure recognized, but this entry point grants NO trust.
          Result := (Status => Not_Verified, Trusted => False);
       end if;
    end Parse_Unverified;
 
    ---------------------------------------------------------------------------
-   --  Parse_And_Verify — full gate; Trusted set once, at the very end.
+   --  Parse_And_Verify — full §9 gate; Trusted set once, at the very end.
    ---------------------------------------------------------------------------
    procedure Parse_And_Verify
      (Document      : Byte_Array;
@@ -112,78 +171,234 @@ package body LTHING_Judicial is
       Public_Key    : Byte_Array;
       Result        : out Verified_Record)
    is
-      Recomputed_Chain : Digest;
-      Carried_Hash     : Digest;
+      F : constant Index_Range := Document'First;
    begin
       Result := (Status => Not_Verified, Trusted => False);
 
-      --  Gate 1: envelope shape — must carry at least the §2 header prefix.
+      --  §9.1 (+shape): at least the fixed 40-byte header.
       if not Envelope_Ok (Document) then
          Result := (Status => Bad_Envelope, Trusted => False);
          return;
       end if;
 
-      --  Gate 2: magic / doctype.
+      --  §9.1/§9.2: preamble, JD doctype, non-zero version.
       if not Magic_Ok (Document) then
          Result := (Status => Bad_Magic, Trusted => False);
          return;
       end if;
 
-      --  Gate 3: §3 format length — must carry chain hash + sig + >= 1 B content.
-      if Document'Length < Min_Sig_Doc_Bytes then
-         Result := (Status => Bad_Length, Trusted => False);
-         return;
-      end if;
-
-      --  Gate 4: public key must be a valid ML-DSA-65 key (1952 bytes).
-      if Public_Key'Length /= LTHING_MLDSA65.PK_Bytes then
-         Result := (Status => Signature_Invalid, Trusted => False);
-         return;
-      end if;
-
-      --  Gate 5: chain-of-custody link.
-      --  Recompute SHAKE512(Previous_Seal || content) and compare against the
-      --  hash carried at [Chain_Hash_Offset .. Chain_Hash_Offset + 63].
-      Chain_Hash (Previous_Seal,
-                  Document (Document'First + Content_Offset .. Document'Last),
-                  Recomputed_Chain);
-
-      for I in Digest_Index loop
-         Carried_Hash (I) := Document (Document'First + Chain_Hash_Offset + I);
-      end loop;
-
-      if not Digest_Equal (Recomputed_Chain, Carried_Hash) then
-         Result := (Status => Chain_Broken, Trusted => False);
-         return;
-      end if;
-
-      --  Gate 6: ML-DSA-65 signature verification.
+      --  At this point Document'Length >= 40, so F + 39 <= Document'Last and
+      --  every header read below is in bounds.
+      pragma Assert (Document'Length >= Header_Bytes);
       declare
-         Typed_PK  : LTHING_MLDSA65.Public_Key;
-         Typed_Sig : LTHING_MLDSA65.Signature;
-         Empty_Ctx : constant Byte_Array (2 .. 1) := (others => 0);
+         Suite : constant Unsigned_16 := Read_U16 (Document, F + Suite_Off);
+         BL    : constant Unsigned_64 := Read_U32 (Document, F + Body_Len_Off);
+         SL    : constant Unsigned_64 := Read_U32 (Document, F + Seal_Len_Off);
+         SigL  : constant Unsigned_64 := Read_U32 (Document, F + Sig_Len_Off);
+         AeadL : constant Unsigned_64 := Read_U32 (Document, F + Aead_Len_Off);
+         Total : constant Unsigned_64 :=
+           Unsigned_64 (Header_Bytes) + BL + SL + SigL + AeadL;
       begin
-         for I in LTHING_MLDSA65.Public_Key'Range loop
-            Typed_PK (I) := Public_Key (Public_Key'First + I);
-         end loop;
-
-         for I in LTHING_MLDSA65.Signature'Range loop
-            Typed_Sig (I) := Document (Document'First + Sig_Offset + I);
-         end loop;
-
-         if not LTHING_MLDSA65.Verify
-           (PK      => Typed_PK,
-            Message => Document (Document'First + Content_Offset .. Document'Last),
-            Context => Empty_Ctx,
-            Sig     => Typed_Sig)
-         then
-            Result := (Status => Signature_Invalid, Trusted => False);
+         --  §9.3/§9.4: seal and signature lengths must be non-zero.
+         if SL = 0 or else SigL = 0 then
+            Result := (Status => Bad_Length, Trusted => False);
             return;
          end if;
-      end;
 
-      --  All gates passed: this is the ONLY place Trusted becomes True.
-      Result := (Status => Verified, Trusted => True);
+         --  §3.1: only suite 0x0001 (baseline) is supported; 0x0000 reserved.
+         if Suite /= Suite_Baseline then
+            Result := (Status => Bad_Length, Trusted => False);
+            return;
+         end if;
+
+         --  Suite 0x0001 fixes the signature length and forbids AEAD.
+         if SigL /= Unsigned_64 (LTHING_MLDSA65.Sig_Bytes)
+           or else AeadL /= 0
+         then
+            Result := (Status => Bad_Length, Trusted => False);
+            return;
+         end if;
+
+         --  §9.5: declared sections must exactly account for the bytes on the
+         --  wire (no overflow, no trailing slack) for the baseline suite.
+         if Total /= Unsigned_64 (Document'Length) then
+            Result := (Status => Bad_Length, Trusted => False);
+            return;
+         end if;
+
+         --  Trusted PK must be exactly the ML-DSA-65 public-key size.
+         if Public_Key'Length /= LTHING_MLDSA65.PK_Bytes then
+            Result := (Status => Bad_Length, Trusted => False);
+            return;
+         end if;
+
+         --  Total = Document'Length <= Max_Document_Bytes, so each cumulative
+         --  offset below is a valid Index_Range value. Pin the bounds that the
+         --  AoRTE checks on the offset arithmetic and length conversions need.
+         pragma Assert (Total = Unsigned_64 (Document'Length));
+         pragma Assert (BL <= Total);
+         pragma Assert (SL <= Total);
+         pragma Assert (BL + SL + SigL <= Total);
+         declare
+            Body_Len   : constant Natural := Natural (BL);
+            Seal_Len   : constant Natural := Natural (SL);
+            Body_Off   : constant Index_Range := F + Header_Bytes;
+            Seal_Off   : constant Index_Range := Body_Off + Body_Len;
+            Sig_Off    : constant Index_Range := Seal_Off + Seal_Len;
+            Signed_Len : constant Natural := Header_Bytes + Body_Len + Seal_Len;
+         begin
+            --  Section geometry, all derived from Total = Document'Length:
+            --  body/seal/signature fit exactly within the wire bytes.
+            pragma Assert (Sig_Off + (LTHING_MLDSA65.Sig_Bytes - 1)
+                           = Document'Last);
+            pragma Assert (Sig_Off <= Document'Last);
+            pragma Assert (Seal_Off <= Sig_Off);
+            pragma Assert (Body_Off + Body_Len = Seal_Off);
+            --  §6/§9.10: the ML-DSA Verify precondition caps the message
+            --  length; an envelope whose signed prefix exceeds it is rejected
+            --  rather than truncated.
+            if Signed_Len > LTHING_MLDSA65.Max_Message_Bytes then
+               Result := (Status => Bad_Length, Trusted => False);
+               return;
+            end if;
+
+            --  §5.1: minimum seal size (signer id may be empty).
+            if Seal_Len < Min_Seal_Bytes then
+               Result := (Status => Bad_Length, Trusted => False);
+               return;
+            end if;
+
+            --  The whole seal lies within [Seal_Off, Sig_Off-1] ⊆ document, so
+            --  every fixed seal field (through offset Min_Seal_Bytes-1) is in
+            --  bounds.
+            pragma Assert (Seal_Off + Seal_Len = Sig_Off);
+            pragma Assert (Seal_Off + (Min_Seal_Bytes - 1) <= Document'Last);
+
+            declare
+               Art_Off    : constant Index_Range := Seal_Off + 2;
+               Chain_Off  : constant Index_Range := Art_Off + Hash_Bytes;
+               Rel_Off    : constant Index_Range := Chain_Off + Hash_Bytes;
+               SidLen_Off : constant Index_Range := Rel_Off + 1;
+               Signer_Off : constant Index_Range := SidLen_Off + 1;
+               Signer_Len : constant Natural :=
+                 Natural (Document (SidLen_Off));
+            begin
+               --  §5: seal_len must equal 196 + signer_len exactly.
+               if Seal_Len /= Min_Seal_Bytes + Signer_Len then
+                  Result := (Status => Bad_Length, Trusted => False);
+                  return;
+               end if;
+
+               --  With the exact seal length, the signer-id and seal-id fields
+               --  end at Sig_Off-1, i.e. inside the document.
+               pragma Assert (Signer_Off + Signer_Len + (Hash_Bytes - 1)
+                              <= Document'Last);
+
+               declare
+                  Sealid_Off : constant Index_Range := Signer_Off + Signer_Len;
+                  Ancestor   : constant Unsigned_16 :=
+                    Read_U16 (Document, Seal_Off);
+                  Relation   : constant Byte := Document (Rel_Off);
+               begin
+                  --  §9.6: ArtifactHash = LTHING_SHAKE512(body).
+                  if not Window_Equal
+                           (LTHING_SHAKE512
+                              (Document (Body_Off .. Body_Off + Body_Len - 1)),
+                            Document, Art_Off)
+                  then
+                     Result := (Status => Seal_Mismatch, Trusted => False);
+                     return;
+                  end if;
+
+                  --  §9.9: GENESIS (Relation = 0x00) iff AncestorCount = 0.
+                  if (Relation = 16#00#) /= (Ancestor = 0) then
+                     Result := (Status => Seal_Mismatch, Trusted => False);
+                     return;
+                  end if;
+
+                  --  §9.7: ChainHash = LTHING_SHAKE512(prev_chain ‖ artifact).
+                  --  Genesis passes Previous_Seal = all-zero digest.
+                  declare
+                     CBuf : Byte_Array (0 .. 2 * Hash_Bytes - 1) :=
+                       (others => 0);
+                  begin
+                     for I in 0 .. Hash_Bytes - 1 loop
+                        CBuf (I) := Previous_Seal (I);
+                     end loop;
+                     for I in 0 .. Hash_Bytes - 1 loop
+                        CBuf (Hash_Bytes + I) := Document (Art_Off + I);
+                     end loop;
+                     if not Window_Equal
+                              (LTHING_SHAKE512 (CBuf), Document, Chain_Off)
+                     then
+                        Result := (Status => Chain_Broken, Trusted => False);
+                        return;
+                     end if;
+                  end;
+
+                  --  §9.8: SealId = LTHING_SHAKE512(ancestor ‖ artifact ‖
+                  --  chain ‖ relation ‖ signer_id).
+                  declare
+                     SCnt : constant Natural :=
+                       2 + Hash_Bytes + Hash_Bytes + 1 + Signer_Len;
+                     SBuf : Byte_Array (0 .. 2 + 2 * Hash_Bytes + 1 + 255 - 1) :=
+                       (others => 0);
+                  begin
+                     SBuf (0) := Document (Seal_Off);
+                     SBuf (1) := Document (Seal_Off + 1);
+                     for I in 0 .. Hash_Bytes - 1 loop
+                        SBuf (2 + I) := Document (Art_Off + I);
+                     end loop;
+                     for I in 0 .. Hash_Bytes - 1 loop
+                        SBuf (2 + Hash_Bytes + I) := Document (Chain_Off + I);
+                     end loop;
+                     SBuf (2 + 2 * Hash_Bytes) := Relation;
+                     for I in 0 .. Signer_Len - 1 loop
+                        SBuf (2 + 2 * Hash_Bytes + 1 + I) :=
+                          Document (Signer_Off + I);
+                     end loop;
+                     if not Window_Equal
+                              (LTHING_SHAKE512 (SBuf (0 .. SCnt - 1)),
+                               Document, Sealid_Off)
+                     then
+                        Result := (Status => Seal_Mismatch, Trusted => False);
+                        return;
+                     end if;
+                  end;
+
+                  --  §9.10: ML-DSA-65 signature over header ‖ body ‖ seal,
+                  --  empty context (§7 design recommendation).
+                  declare
+                     PKc   : LTHING_MLDSA65.Public_Key := (others => 0);
+                     Sgc   : LTHING_MLDSA65.Signature  := (others => 0);
+                     Empty : constant Byte_Array (1 .. 0) := (others => 0);
+                     PKf   : constant Index_Range := Public_Key'First;
+                  begin
+                     for I in 0 .. LTHING_MLDSA65.PK_Bytes - 1 loop
+                        PKc (I) := Public_Key (PKf + I);
+                     end loop;
+                     for I in 0 .. LTHING_MLDSA65.Sig_Bytes - 1 loop
+                        Sgc (I) := Document (Sig_Off + I);
+                     end loop;
+
+                     if not LTHING_MLDSA65.Verify
+                              (PK      => PKc,
+                               Message => Document (F .. F + Signed_Len - 1),
+                               Context => Empty,
+                               Sig     => Sgc)
+                     then
+                        Result :=
+                          (Status => Signature_Invalid, Trusted => False);
+                        return;
+                     end if;
+                  end;
+
+                  --  Every §9 gate passed: the ONLY place Trusted is True.
+                  Result := (Status => Verified, Trusted => True);
+               end;
+            end;
+         end;
+      end;
    end Parse_And_Verify;
 
 end LTHING_Judicial;

@@ -1,7 +1,9 @@
-# Claude Code local state / agent worktrees
-.claude/
+# Claude Code local state / agent worktrees (but track the committed hook + settings)
+.claude/*
+!.claude/hooks/
+!.claude/settings.json
 
-# Build output (never commit build artifacts)
+# Build output (ask before building artifacts)
 build/
 dist/
 
@@ -10,6 +12,4 @@ obj/
 obj_prove/
 obj_tests/
 
-# Python caches
-__pycache__/
-*.pyc
+# Python caches should not be ever

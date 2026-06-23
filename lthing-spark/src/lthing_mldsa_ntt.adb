@@ -8,19 +8,18 @@ pragma SPARK_Mode (On);
 
 package body LTHING_MLDSA_NTT is
 
-   type Zeta_Table is array (0 .. 255) of Fq;
-
    --  8-bit bit-reversal.
    function BRV (X : Natural) return Natural
-     with Global => null,
-          Pre  => X <= 255,
+     with Pre  => X <= 255,
           Post => BRV'Result <= 255
    is
       R : Natural := 0;
       V : Natural := X;
    begin
       for I in 0 .. 7 loop
-         pragma Loop_Invariant (R <= 2 ** I - 1);
+         --  After I iterations R holds I bits (< 2**I) and V is X shifted
+         --  right by I bits (so V <= 255 throughout).
+         pragma Loop_Invariant (R < 2 ** I);
          pragma Loop_Invariant (V <= 255);
          R := R * 2 + (V mod 2);
          V := V / 2;
@@ -28,24 +27,31 @@ package body LTHING_MLDSA_NTT is
       return R;
    end BRV;
 
-   --  Compute zetas[i] = zeta^brv(i) mod q, i in 0..255, by square-and-multiply.
-   --  Used once to initialize the constant table below at elaboration; since the
-   --  table is a constant, the transforms that read it need no Global aspect.
+   --  Index type into the 256-entry zeta table.
+   subtype Zeta_Index is Natural range 0 .. 255;
+
+   type Zeta_Table is array (Zeta_Index) of Fq;
+
+   --  Compute zetas[i] = zeta^brv(i) mod q, i in 0..255, at elaboration time.
+   --  Global => null makes Zetas a constant WITHOUT variable input (not SPARK
+   --  state), so callers like Verify need not list it in their Global aspect.
    function Compute_Zetas return Zeta_Table
      with Global => null
    is
-      T   : Zeta_Table;
-      Acc : Fq;
-      E   : Natural;
+      Result : Zeta_Table;
+      Acc    : Fq;
+      E      : Natural;
    begin
-      for I in 0 .. 255 loop
+      for I in Zeta_Index loop
+         --  zeta^brv(i) by square-and-multiply
          Acc := 1;
-         E   := BRV (I);                  --  E in 0 .. 255
+         E   := BRV (I);
          declare
-            Base : Fq      := Zeta_Root;
+            Base : Fq := Zeta_Root;
             Exp  : Natural := E;
          begin
             while Exp > 0 loop
+               pragma Loop_Invariant (Exp <= E);
                pragma Loop_Variant (Decreases => Exp);
                if Exp mod 2 = 1 then
                   Acc := Mul (Acc, Base);
@@ -54,118 +60,129 @@ package body LTHING_MLDSA_NTT is
                Exp  := Exp / 2;
             end loop;
          end;
-         T (I) := Acc;
+         Result (I) := Acc;
       end loop;
-      return T;
+      return Result;
    end Compute_Zetas;
 
-   --  Precomputed at elaboration; immutable thereafter.
+   --  Elaboration-time constant: no mutable global state, no lazy init.
    Zetas : constant Zeta_Table := Compute_Zetas;
+
+   --  Layer stride: power of two in 1 .. 128.
+   subtype Layer_Len is Natural range 1 .. 128;
 
    ---------------------------------------------------------------------------
    --  Forward NTT (Cooley-Tukey), matching the Dilithium reference layout.
    --
-   --  AoRTE proof sketch. The middle loop maintains
-   --      2 * Len * K = 256 - 2 * Len + Start          (rel)
-   --  with Start a multiple of 2*Len and 2*Len dividing 256. From (rel) and
-   --  Start < 256, after K := K + 1 we get 2*Len*K = 256 + Start < 512, hence
-   --  K <= 255, so Zetas (K) is in range; and Start + 2*Len <= 256, so the
-   --  butterfly indices J and J+Len stay within 0 .. 255.
+   --  K is incremented once per butterfly group. Over the whole transform the
+   --  group counts per layer sum to 1+2+...+128 = 255, so K stays in 0 .. 255
+   --  and Zetas (K) is always in range. The invariants below pin the exact
+   --  value of K from (Len, Start) so the prover can discharge the bounds.
    ---------------------------------------------------------------------------
    procedure NTT (A : in out Poly) is
-      Len  : Natural := 128;
-      K    : Natural := 0;
+      Len  : Layer_Len := 128;
+      GPL  : Natural   := 1;   --  groups per layer = 128 / Len (linear witness)
+      K    : Natural   := 0;
       Zeta : Fq;
       T    : Fq;
    begin
       while Len >= 1 loop
-         pragma Loop_Invariant (Len in 1 .. 128);
-         pragma Loop_Invariant (256 mod (2 * Len) = 0);
-         pragma Loop_Invariant (2 * Len * (K + 1) = 256);
+         pragma Loop_Invariant (Len in Layer_Len);
+         --  Len * GPL = 128 is the linear divisibility witness: it makes
+         --  2*Len*GPL = 256 and lets the prover see Start strides tile 0..255.
+         pragma Loop_Invariant (Len * GPL = 128);
+         --  Number of groups already fully processed in earlier layers.
+         pragma Loop_Invariant (K = GPL - 1);
          pragma Loop_Variant (Decreases => Len);
          declare
             Start : Natural := 0;
+            G     : Natural := 0;   --  group index within layer = Start/(2*Len)
          begin
             while Start < 256 loop
-               pragma Loop_Invariant (Start mod (2 * Len) = 0);
-               pragma Loop_Invariant (Start <= 256);
-               pragma Loop_Invariant (2 * Len * K = 256 - 2 * Len + Start);
+               pragma Loop_Invariant (G <= GPL);
+               pragma Loop_Invariant (Start = G * (2 * Len));
+               pragma Loop_Invariant (K = GPL - 1 + G);
+               pragma Loop_Invariant (K <= 254);
                pragma Loop_Variant (Increases => Start);
-
-               K := K + 1;
-               --  From (rel): 2*Len*K = 256 + Start < 512  =>  K <= 255.
-               pragma Assert (2 * Len * K = 256 + Start);
-               pragma Assert (K <= 255);
-               --  2*Len | 256, 2*Len | Start, Start < 256  =>  Start+2*Len<=256.
+               --  G < GPL here (Start < 256 = GPL*2*Len), so Start+2*Len <= 256.
+               pragma Assert (G < GPL);
                pragma Assert (Start + 2 * Len <= 256);
-
+               K := K + 1;
                Zeta := Zetas (K);
                for J in Start .. Start + Len - 1 loop
-                  pragma Loop_Invariant (J >= Start and then J <= Start + Len - 1);
+                  pragma Loop_Invariant (J in Start .. Start + Len - 1);
+                  pragma Loop_Invariant (J + Len <= 255);
                   T := Mul (Zeta, A (J + Len));
                   A (J + Len) := Sub (A (J), T);
                   A (J)       := Add (A (J), T);
                end loop;
                Start := Start + 2 * Len;
+               G     := G + 1;
             end loop;
+            --  After the sweep G = GPL, so K advanced by GPL groups.
+            pragma Assert (K = 2 * GPL - 1);
          end;
+         exit when Len = 1;
          Len := Len / 2;
+         GPL := GPL * 2;
       end loop;
    end NTT;
 
    ---------------------------------------------------------------------------
    --  Inverse NTT (Gentleman-Sande) + final scaling by n^{-1}.
    --
-   --  AoRTE proof sketch. The middle loop maintains
-   --      2 * K * Len = 512 - Start                     (rel')
-   --  with Start a multiple of 2*Len and 2*Len dividing 256. From (rel') and
-   --  Start < 256 we get 2*K*Len > 256, so K >= 1 (K-1 stays >= 0); after
-   --  K := K - 1, 2*K*Len = 512 - Start - 2*Len, and since the first access has
-   --  K-1 <= 255, Zetas (K) is in range. Butterfly indices as in NTT.
+   --  K starts at 256 and is decremented once per butterfly group; mirror of
+   --  the forward direction, so K stays in 1 .. 255 and Zetas (K) is in range.
    ---------------------------------------------------------------------------
    procedure Inv_NTT (A : in out Poly) is
-      Len   : Natural := 1;
-      K     : Natural := 256;
+      Len   : Layer_Len := 1;
+      GPL   : Natural   := 128;   --  groups per layer = 128 / Len (linear witness)
+      K     : Natural   := 256;
       Zeta  : Fq;
       T     : Fq;
       --  n^{-1} mod q for n=256: 256^{-1} mod 8380417 = 8347681
       N_Inv : constant Fq := 8_347_681;
    begin
       while Len <= 128 loop
-         pragma Loop_Invariant (Len in 1 .. 128);
-         pragma Loop_Invariant (256 mod (2 * Len) = 0);
-         pragma Loop_Invariant (K * Len = 256);
+         pragma Loop_Invariant (Len in Layer_Len);
+         --  Len * GPL = 128: linear divisibility witness (see NTT).
+         pragma Loop_Invariant (Len * GPL = 128);
+         --  Groups not yet processed for this and remaining layers.
+         pragma Loop_Invariant (K = 2 * GPL);
          pragma Loop_Variant (Increases => Len);
          declare
             Start : Natural := 0;
+            G     : Natural := 0;   --  group index within layer = Start/(2*Len)
          begin
             while Start < 256 loop
-               pragma Loop_Invariant (Start mod (2 * Len) = 0);
-               pragma Loop_Invariant (Start <= 256);
-               pragma Loop_Invariant (2 * K * Len = 512 - Start);
+               pragma Loop_Invariant (G <= GPL);
+               pragma Loop_Invariant (Start = G * (2 * Len));
+               pragma Loop_Invariant (K = 2 * GPL - G);
+               pragma Loop_Invariant (K >= 1);
                pragma Loop_Variant (Increases => Start);
-
-               --  2*K*Len = 512 - Start > 256 (Start<256), Len<=128 => K >= 1.
-               pragma Assert (2 * K * Len > 256);
-               pragma Assert (K >= 1);
+               --  G < GPL here (Start < 256 = GPL*2*Len), so Start+2*Len <= 256.
+               pragma Assert (G < GPL);
                pragma Assert (Start + 2 * Len <= 256);
-
                K := K - 1;
-               --  2*(K+1)*Len = 512 - Start, K+1 <= 256 => K <= 255.
-               pragma Assert (K <= 255);
-
-               Zeta := Sub (0, Zetas (K));    --  GS uses -zeta
+               --  GS uses -zeta; (q - zetas(k)) is the negation
+               Zeta := Sub (0, Zetas (K));
                for J in Start .. Start + Len - 1 loop
-                  pragma Loop_Invariant (J >= Start and then J <= Start + Len - 1);
+                  pragma Loop_Invariant (J in Start .. Start + Len - 1);
+                  pragma Loop_Invariant (J + Len <= 255);
                   T := A (J);
                   A (J)       := Add (T, A (J + Len));
                   A (J + Len) := Sub (T, A (J + Len));
                   A (J + Len) := Mul (Zeta, A (J + Len));
                end loop;
                Start := Start + 2 * Len;
+               G     := G + 1;
             end loop;
+            --  After the sweep G = GPL, so K dropped by GPL groups.
+            pragma Assert (K = GPL);
          end;
+         exit when Len = 128;
          Len := Len * 2;
+         GPL := GPL / 2;
       end loop;
       for I in A'Range loop
          A (I) := Mul (A (I), N_Inv);
@@ -185,7 +202,7 @@ package body LTHING_MLDSA_NTT is
    --  Negacyclic schoolbook multiply mod (x^256 + 1): the ground-truth gate.
    ---------------------------------------------------------------------------
    function Schoolbook_Mul (A, B : Poly) return Poly is
-      R   : Poly := (others => 0);
+      R : Poly := (others => 0);
       Idx : Natural;
    begin
       for I in 0 .. 255 loop

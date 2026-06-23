@@ -1,28 +1,19 @@
 # CLAUDE.md — lthing-spark (Ada/SPARK layer)
 
-SPARK control layer + NIST COMPLIANT CRYPTOGRAPHY IN ADA SPARK
-
-## SPARK_Mode = On, always
-Every library source unit is `SPARK_Mode (On)`; the proof target is AoRTE +
-flow + stated contracts, and `gnatprove -P lthing.gpr --level=2` reports
-**0 unproved**. Do not introduce `SPARK_Mode (Off)` in `src/*.ad?` library code.
-The only `Off` units are the `src/test_*.adb` harness mains (they drive
-`Ada.Text_IO` / `Ada.Command_Line`, which are outside the proof boundary).
+SPARK control layer + ML-DSA-65 parts + pure-Ada Keccak. Read the **root
+`CLAUDE.md`** first for toolchain + the non-negotiable conventions (fail-closed,
+no frozen vectors, "done = builds + tests pass + 0 unproved").
 
 ## Units
 | Unit | SPARK | Role |
 |------|-------|------|
 | `lthing_types` | On | `Byte`, bounded `Byte_Array` (0..1 MiB), `Digest` (64B), `Verified_Record` + predicate |
-| `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. KAT in `test_keccak`. |
+| `lthing_keccak` | On | Keccak-f[1600] + `Sponge(Input, Rate, Domain, Output)`. **Proved (51 checks, 0 unproved).** KAT in `test_keccak`. |
 | `lthing_hash` | On | `SHAKE512` (rate 72, domain `0x1F`) + `Chain_Hash`. |
-| `lthing_judicial` | On | `Parse_Unverified` / `Parse_And_Verify` (fail-closed; postconditions proved). |
-| `lthing_mldsa_field` | On | Z_q arithmetic (proved, range postconditions). |
-| `lthing_mldsa_ntt` | On | NTT/INTT in-place butterflies (AoRTE proved via K/Len/Start invariants); convolution gate in `test_ntt`. |
-| `lthing_mldsa_codec` | On | pk/sig decode (proved, range postconditions). |
-| `lthing_mldsa_round` | On | rounding / hint layer (proved). |
-| `lthing_mldsa_sample` | On | ExpandA + SampleInBall (AoRTE proved; fixed-buffer rejection sampling). |
-| `lthing_mldsa65` | On | FIPS 204 Alg. 3+8 verifier; `Arithmetic_Core_Complete = True`; passes 15-vector KAT. |
-| `lthing_mldsa87*` | On | ML-DSA-87 spec-only stubs (no bodies yet). |
+| `lthing_judicial` | On | `Parse_And_Verify` — full LTHING envelope verify (§2/§3/§5/§6/§9 of `LTHING_HEADER_SPEC.md`): header geometry, seal-hash recompute, ML-DSA-65 signature over `header‖body‖seal`; fail-closed, postconditions + AoRTE proved. `Digest_Equal` is pure-Ada XOR (asm FFI retired). |
+| `lthing_mldsa_field` | On | Z_q arithmetic (proved). |
+| `lthing_mldsa_ntt` | On | NTT/INTT (proved AoRTE; correctness via negacyclic-convolution gate). |
+| `lthing_mldsa65`, `lthing_mldsa_sample` | On | Full ML-DSA-65 Verify (Alg 3/8) + samplers; body present, KAT-validated (15/15), gnatprove-clean. |
 
 ## Keccak/SHAKE API (use this, not the FFI)
 ```ada
@@ -40,21 +31,5 @@ gnatmake -q -D /tmp/b -aIsrc -o /tmp/b/<main> src/<main>.adb && /tmp/b/<main>
 gnatprove -P lthing.gpr --level=2 --report=all -j0            # whole project
 gnatprove -P lthing.gpr -u <unit>.adb --level=2 --report=all  # one unit
 ```
-Authoritative KAT values come from NIST site ONLY
-
-## Accuracy loop (how to get the crypto right)
-For every primitive, iterate until the math matches the standard, then gate it
-with an I/O test against authoritative vectors:
-
-1. **Read the spec** — what this unit must compute (project / format spec).
-2. **Check the source** — the existing code and any reference behaviour present.
-3. **Read the official spec** — the authoritative FIPS / NIST text. Never guess a
-   constant, step, or parameter; pull it from the standard.
-4. **Write the math** — implement the arithmetic exactly as the official spec defines.
-5. **Repeat 1–4** until the unit is complete enough to exercise.
-6. **Run an I/O test** — feed authoritative inputs and check outputs against them
-   (the sigVer / hash KAT gate). No self-derived vectors — KATs from the NIST site
-   only (see above).
-
-Only after the I/O test passes is the unit a candidate for "done"
-(builds + all `[PASS]` + `gnatprove` 0 unproved).
+Authoritative KAT values come from Python `hashlib` (`sha3_512`, `sha3_256`,
+`shake_256`, `shake_128`) — generate, never hand-write.

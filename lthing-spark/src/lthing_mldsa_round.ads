@@ -104,7 +104,8 @@ package LTHING_MLDSA_Round is
    ---------------------------------------------------------------------------
    function Use_Hint (H : Integer_32; R : Fq) return Bins
      with Global => null,
-          Pre    => H = 0 or else H = 1;
+          Pre    => H = 0 or else H = 1,
+          Post   => Use_Hint'Result in 0 .. M_Bins - 1;
 
    ---------------------------------------------------------------------------
    --  W1_Encode — pack a polynomial of w1 coeffs (each 0..15) into 128 bytes,

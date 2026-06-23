@@ -1,4 +1,4 @@
-# RENAME TO STARTHERE.md — psychic-octo-couscous
+# CLAUDE.md — psychic-octo-couscous
 
 ## What this repo holds
 - `lthing-spark/` — an **Ada/SPARK** implementation of an **ML-DSA-65 (FIPS 204)**
@@ -37,7 +37,7 @@ mains pass.
   `True`/accept until it genuinely verifies. Never weaken a judicial
   postcondition. The audit (FINDING-002/006) is the whole reason this layer exists.
 - **No frozen / self-derived test vectors.** A test asserts either (a) an
-  *authoritative* KAT (FIPS 202 / `hashlib`, e.g. `keccak_f1600(0)`, SHA3-512,
+  *authoritative* KAT (FIPS 204+ / `hashlib`, e.g. `keccak_f1600(0)`, SHA3-512,
   SHAKE256), or (b) a *relational / property* fact (determinism, `Chain_Hash ==
   SHAKE512(prev‖art)`, input-sensitivity, fail-closed-on-garbage). Never paste a
   magic digest you computed yourself and call it a gate.
@@ -45,4 +45,5 @@ mains pass.
   flow + stated contracts. A change is **done only when** it builds, every test
   main prints all `[PASS]` and exits 0, **and** `gnatprove` reports **0 unproved**.
 - Tests print `[PASS]`/`[FAIL]` and call `Set_Exit_Status(Failure)` on any fail.
+- If everything passes, inform the human
 - Don't commit `obj/` or `obj_prove/` (gitignored).

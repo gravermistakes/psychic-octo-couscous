@@ -10,11 +10,9 @@
 --          ||z||_inf < gamma1 - beta
 --      AND c_tilde2 = c_tilde AND popcount(h) <= omega.
 --
---  SPARK posture: SPARK_Mode (On). Proof target is AoRTE + flow. It composes
---  the NTT / sampling / codec / round layers, all now SPARK_Mode (On) and
---  proved free of run-time errors; the field layer it leans on is proved with
---  range postconditions. Functional (cryptographic) correctness stays gated by
---  the 15-vector FIPS 204 sigVer KAT (test_kat.adb).
+--  SPARK_Mode (On) throughout (NTT / sampling layers included); the proof
+--  target is AoRTE + flow. Earlier this body and the NTT/sample units were
+--  
 --
 --  Fail-closed is preserved: any decode failure, malformed hint, norm overflow,
 --  challenge mismatch, or excess hint weight returns False. Verify only returns
@@ -45,9 +43,7 @@ package body LTHING_MLDSA65 is
    Two_Pow_D : constant := 8_192;        --  2^d, d = 13
 
    --  Coeff-wise add over Fq.
-   function Add_Poly (A, B : FPoly) return FPoly
-     with Global => null
-   is
+   function Add_Poly (A, B : FPoly) return FPoly is
       R : FPoly;
    begin
       for I in FPoly'Range loop
@@ -57,9 +53,7 @@ package body LTHING_MLDSA65 is
    end Add_Poly;
 
    --  Coeff-wise sub over Fq.
-   function Sub_Poly (A, B : FPoly) return FPoly
-     with Global => null
-   is
+   function Sub_Poly (A, B : FPoly) return FPoly is
       R : FPoly;
    begin
       for I in FPoly'Range loop
@@ -94,8 +88,8 @@ package body LTHING_MLDSA65 is
       C_Poly  : Ntt.Poly;            --  challenge, coeffs in {-1,0,+1}
       C_Hat   : FPoly;
 
-      Tr       : Byte_Array (0 .. 63);
-      Mu       : Byte_Array (0 .. 63);
+      Tr      : Byte_Array (0 .. 63);
+      Mu      : Byte_Array (0 .. 63);
       C_Tilde2 : Byte_Array (0 .. C_Tilde_Bytes - 1);
 
       W1_Bytes : Byte_Array (0 .. K_Dim * 128 - 1) := (others => 0);
@@ -166,11 +160,15 @@ package body LTHING_MLDSA65 is
       C_Hat := C_Poly;
       Ntt.NTT (C_Hat);
 
-      --  ---- steps 6-8: per-row w(r), w1(r) = UseHint(h(r), w(r)), encode ----
+      --  ---- step 6: w(r) = INTT( sum_s A_hat(r,s) o NTT(z(s))
+      --                            - c_hat o NTT(t1(r) * 2^d) ) ----
+      --  Pre-transform z(s) once.
       declare
-         Z_Hat : array (0 .. L_Dim - 1) of FPoly := (others => (others => 0));
+         Z_Hat : array (0 .. L_Dim - 1) of FPoly :=
+           (others => (others => 0));
+         W1    : array (0 .. K_Dim - 1) of Rnd.Poly :=
+           (others => (others => 0));
       begin
-         --  Pre-transform z(s) once.
          for S in 0 .. L_Dim - 1 loop
             for I in FPoly'Range loop
                Z_Hat (S) (I) := Z (S) (I);    --  already canonical 0..Q-1
@@ -179,15 +177,19 @@ package body LTHING_MLDSA65 is
          end loop;
 
          for R in 0 .. K_Dim - 1 loop
+            --  Every fully-computed W1 row so far is bounded by M_Bins - 1;
+            --  this carries the per-coefficient bound out to step 8, where
+            --  W1_Encode requires all coeffs of each row <= M_Bins - 1.
+            pragma Loop_Invariant
+              (for all RR in 0 .. R - 1 =>
+                 (for all J in FPoly'Range => W1 (RR) (J) <= Rnd.M_Bins - 1));
             declare
-               Acc     : FPoly := (others => 0);
-               T1d     : FPoly;
+               Acc    : FPoly := (others => 0);
+               T1d    : FPoly;
                T1d_Hat : FPoly;
-               W_Hat   : FPoly;
-               W_Poly  : FPoly;
-               W1_R    : Rnd.Poly := (others => 0);
+               W_Hat  : FPoly;
+               W_Poly : FPoly;
             begin
-               --  w_hat(r) = sum_s A_hat(r,s) o NTT(z(s)) - c_hat o NTT(t1d(r))
                for S in 0 .. L_Dim - 1 loop
                   Acc := Add_Poly (Acc, Ntt.Pointwise (A_Hat (R, S), Z_Hat (S)));
                end loop;
@@ -200,26 +202,32 @@ package body LTHING_MLDSA65 is
                T1d_Hat := T1d;
                Ntt.NTT (T1d_Hat);
 
-               W_Hat  := Sub_Poly (Acc, Ntt.Pointwise (C_Hat, T1d_Hat));
+               W_Hat := Sub_Poly (Acc, Ntt.Pointwise (C_Hat, T1d_Hat));
+
                W_Poly := W_Hat;
                Ntt.Inv_NTT (W_Poly);
 
-               --  step 7: w1(r) = UseHint(h(r), w(r)); each result in 0..15.
+               --  ---- step 7: w1(r) = UseHint(h(r), w(r)) ----
+               --  Use_Hint returns a value in 0 .. M_Bins - 1; the invariant
+               --  carries that bound across every written coefficient so the
+               --  W1_Encode precondition (all coeffs <= M_Bins - 1) discharges.
                for I in FPoly'Range loop
                   pragma Loop_Invariant
-                    (for all II in FPoly'First .. I - 1 =>
-                       W1_R (II) <= Rnd.M_Bins - 1);
-                  W1_R (I) := Rnd.Use_Hint (H (R) (I), W_Poly (I));
+                    (for all J in FPoly'First .. I - 1 =>
+                       W1 (R) (J) <= Rnd.M_Bins - 1);
+                  W1 (R) (I) := Rnd.Use_Hint (H (R) (I), W_Poly (I));
                end loop;
+            end;
+         end loop;
 
-               --  step 8: encode this poly's 128 bytes into the right slice.
-               declare
-                  Enc : constant Rnd.W1_Bytes := Rnd.W1_Encode (W1_R);
-               begin
-                  for I in Enc'Range loop
-                     W1_Bytes (R * 128 + I) := Enc (I);
-                  end loop;
-               end;
+         --  ---- step 8: w1bytes := W1_Encode over all k polys ----
+         for R in 0 .. K_Dim - 1 loop
+            declare
+               Enc : constant Rnd.W1_Bytes := Rnd.W1_Encode (W1 (R));
+            begin
+               for I in Enc'Range loop
+                  W1_Bytes (R * 128 + I) := Enc (I);
+               end loop;
             end;
          end loop;
       end;
@@ -257,10 +265,14 @@ package body LTHING_MLDSA65 is
       end loop;
 
       --  (b) hint weight <= omega
+      --  Each H (R) (I) is a Hint_Bit (0 .. 1), so the accumulator grows by at
+      --  most 1 per coefficient; over k*256 = 1536 coefficients it stays well
+      --  below Natural'Last. The invariants pin that bound so the running add
+      --  cannot overflow.
       for R in 0 .. K_Dim - 1 loop
-         pragma Loop_Invariant (Hint_Weight <= R * 256);
+         pragma Loop_Invariant (Hint_Weight <= R * N);
          for I in Cod.Hint_Poly'Range loop
-            pragma Loop_Invariant (Hint_Weight <= R * 256 + I);
+            pragma Loop_Invariant (Hint_Weight <= R * N + I);
             Hint_Weight := Hint_Weight + Natural (H (R) (I));
          end loop;
       end loop;

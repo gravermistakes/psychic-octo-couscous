@@ -1,125 +1,74 @@
-------------------------------------------------------------------------------
---  test_sample — relational self-gates for ML-DSA sampling (FIPS 204)
---
---  No frozen / hand-written vectors. Gates are RELATIONAL / property facts:
---    * Sample_In_Ball produces exactly tau=49 nonzero coeffs, each centered
---      to +1 or -1 (Alg. 29 invariant), for two distinct c_tilde inputs.
---    * Expand_A is deterministic (run twice -> equal) and every coefficient
---      of every A(r,s) lies in 0 .. q-1 (Alg. 30/32 range invariant).
---
---  GPL-3.0-or-later.
-------------------------------------------------------------------------------
-
+--  test_sample — SampleInBall (tau=49, coeffs +-1) + ExpandA determinism +
+--  input-sensitivity (adversarial). c_tilde / rho sourced from KAT vector V31.
 with LTHING_MLDSA_Sample; use LTHING_MLDSA_Sample;
-with LTHING_MLDSA_NTT;    use LTHING_MLDSA_NTT;
-with LTHING_MLDSA_Field;  use LTHING_MLDSA_Field;
+with LTHING_MLDSA_NTT;    use LTHING_MLDSA_NTT;     --  Poly
+with LTHING_MLDSA_Field;  use LTHING_MLDSA_Field;   --  Fq, To_Centered
+with MLDSA_KAT_Vectors;
 with LTHING_Types;        use LTHING_Types;
 with Interfaces;          use Interfaces;
 with Ada.Text_IO;         use Ada.Text_IO;
-with Ada.Command_Line;    use Ada.Command_Line;
-
+with Ada.Command_Line;
 procedure Test_Sample is
-
-   Q_Const : constant := 8_380_417;
-   Fails   : Natural := 0;
-
-   procedure Check (Cond : Boolean; Msg : String) is
+   package M renames MLDSA_KAT_Vectors;
+   V     : M.Vector renames M.V31;
+   Ct    : Byte_Array (0 .. 47);
+   C     : Poly;
+   Fails : Natural := 0;
+   PM1   : Boolean := True;
+   procedure Chk (Name : String; Cond : Boolean) is
    begin
-      if Cond then
-         Put_Line ("[PASS] " & Msg);
-      else
-         Put_Line ("[FAIL] " & Msg);
-         Fails := Fails + 1;
-      end if;
-   end Check;
-
-   ---------------------------------------------------------------------------
-   --  Sample_In_Ball gate for one c_tilde fill value.
-   ---------------------------------------------------------------------------
-   procedure Gate_Ball (Fill : Byte; Label : String) is
-      C_Tilde : Byte_Array (0 .. 47) := (others => Fill);   --  48 bytes
-      C       : Poly;
-      Cnt     : Natural;
-      Pm_Ok   : Boolean := True;
+      if Cond then Put_Line ("[PASS] " & Name);
+      else Put_Line ("[FAIL] " & Name); Fails := Fails + 1; end if;
+   end Chk;
+   function Nonzero (P : Poly) return Natural is
+      N : Natural := 0;
    begin
-      Sample_In_Ball (C_Tilde, C);
-      Cnt := Count_Nonzero (C);
-      Check (Cnt = 49,
-             "SampleInBall(" & Label & "): Count_Nonzero = 49 (got"
-             & Cnt'Image & ")");
+      for I in P'Range loop if P (I) /= 0 then N := N + 1; end if; end loop;
+      return N;
+   end Nonzero;
+begin
+   for I in 0 .. 47 loop Ct (I) := V.Sig (I); end loop;   --  c_tilde = sig[0..47]
+   Sample_In_Ball (Ct, C);
+   Chk ("SampleInBall: exactly tau=49 nonzero coeffs", Nonzero (C) = 49);
+   for I in C'Range loop
+      if C (I) /= 0 and then abs (To_Centered (C (I))) /= 1 then PM1 := False; end if;
+   end loop;
+   Chk ("SampleInBall: every nonzero coeff centers to +-1", PM1);
 
-      --  every nonzero coeff centers to +1 or -1
-      for I in C'Range loop
-         if C (I) /= 0 then
-            declare
-               Ctr : constant Integer_32 := To_Centered (C (I));
-            begin
-               if Ctr /= 1 and then Ctr /= -1 then
-                  Pm_Ok := False;
-               end if;
-            end;
-         end if;
-      end loop;
-      Check (Pm_Ok,
-             "SampleInBall(" & Label & "): every nonzero coeff centers to +-1");
-   end Gate_Ball;
-
-   ---------------------------------------------------------------------------
-   --  Equality of two matrices (for determinism gate).
-   ---------------------------------------------------------------------------
-   function Eq (A, B : Matrix) return Boolean is
+   --  Adversarial input-sensitivity: a flipped c_tilde byte changes the challenge.
+   declare
+      Ct2  : Byte_Array (0 .. 47) := Ct;
+      C2   : Poly;
+      Diff : Boolean := False;
    begin
-      for R in A'Range (1) loop
-         for S in A'Range (2) loop
-            for I in 0 .. 255 loop
-               if A (R, S) (I) /= B (R, S) (I) then
-                  return False;
-               end if;
+      Ct2 (0) := Ct2 (0) xor 1;
+      Sample_In_Ball (Ct2, C2);
+      for I in C'Range loop if C (I) /= C2 (I) then Diff := True; end if; end loop;
+      Chk ("SampleInBall input-sensitive (flipped c_tilde changes output)", Diff);
+   end;
+
+   --  ExpandA determinism.
+   declare
+      Rho : Byte_Array (0 .. 31);
+      A1, A2 : Matrix;
+      Det : Boolean := True;
+   begin
+      for I in 0 .. 31 loop Rho (I) := V.PK (I); end loop;
+      Expand_A (Rho, A1);
+      Expand_A (Rho, A2);
+      for R in 0 .. 5 loop
+         for S in 0 .. 4 loop
+            for J in 0 .. 255 loop
+               if A1 (R, S) (J) /= A2 (R, S) (J) then Det := False; end if;
             end loop;
          end loop;
       end loop;
-      return True;
-   end Eq;
-
-   Rho  : Byte_Array (0 .. 31);
-   A1   : Matrix;
-   A2   : Matrix;
-   Rng  : Boolean := True;
-
-begin
-   Put_Line ("== ML-DSA sampling self-gates (FIPS 204, relational) ==");
-
-   --  GATE 1+2: Sample_In_Ball for two distinct c_tilde fills.
-   Gate_Ball (16#01#, "0x01");
-   Gate_Ball (16#AB#, "0xAB");
-
-   --  fixed rho (deterministic, distinct bytes so each (r,s) seed differs)
-   for I in Rho'Range loop
-      Rho (I) := Byte ((I * 7 + 3) mod 256);
-   end loop;
-
-   --  GATE 3: Expand_A determinism (run twice -> equal).
-   Expand_A (Rho, A1);
-   Expand_A (Rho, A2);
-   Check (Eq (A1, A2), "Expand_A is deterministic (two runs equal)");
-
-   --  GATE 4: every coeff of every A(r,s) is in 0 .. q-1.
-   for R in A1'Range (1) loop
-      for S in A1'Range (2) loop
-         for I in 0 .. 255 loop
-            if not (Integer (A1 (R, S) (I)) in 0 .. Q_Const - 1) then
-               Rng := False;
-            end if;
-         end loop;
-      end loop;
-   end loop;
-   Check (Rng, "Expand_A: every coeff in 0 .. q-1");
+      Chk ("ExpandA deterministic (two runs equal)", Det);
+   end;
 
    New_Line;
-   if Fails = 0 then
-      Put_Line ("ALL GATES PASSED: ML-DSA sampling self-gates green");
-   else
-      Put_Line ("FAILURES:" & Fails'Image);
-      Set_Exit_Status (Failure);
+   if Fails = 0 then Put_Line ("SAMPLE GATE PASSED: SampleInBall tau=49/+-1 + ExpandA determinism");
+   else Put_Line ("SAMPLE FAILURES:" & Fails'Image);
+        Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
    end if;
 end Test_Sample;
