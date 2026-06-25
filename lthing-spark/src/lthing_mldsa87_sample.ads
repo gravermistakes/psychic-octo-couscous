@@ -35,11 +35,15 @@ package LTHING_MLDSA87_Sample is
    type Matrix is array (0 .. 7, 0 .. 6) of Poly;   --  k=8, l=7
 
    --  ExpandA: expand rho (32 bytes) into the k x l matrix A_hat (NTT domain).
+   --  Rho is exactly the 32-byte ML-DSA matrix seed; the precondition both
+   --  documents that and bounds the seed-assembly indexing (Rho'First + I).
+   --  Mirrors LTHING_MLDSA_Sample.Expand_A.
    procedure Expand_A
      (Rho : Byte_Array;
-      A   : out Matrix);
+      A   : out Matrix)
+     with Pre => Rho'First = 0 and then Rho'Last = 31;
 
-   --  count nonzero coeffs (for the self-gate / debugging)
-   function Count_Nonzero (C : Poly) return Natural;
+   --  count nonzero coeffs (for the self-gate / debugging) <-- NOT ALLOWED
+   -- function Count_Nonzero (C : Poly) return Natural;
 
 end LTHING_MLDSA87_Sample;

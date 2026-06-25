@@ -79,13 +79,26 @@ package LTHING_MLDSA87 is
    --  implies a genuine FIPS 204 acceptance) cannot be proved statically; the
    --  safety direction is the contract obligation -- while no validated core
    --  exists, any body must return False unconditionally (fail-closed).
+   --  Upper bound on the application message length, mirrored from
+   --  LTHING_MLDSA65. The verifier forms M' = 0x00 || len(ctx) || ctx ||
+   --  Message (2 framing bytes + up to 255 context bytes) and then tr || M'
+   --  (64 extra bytes), so the largest derived buffer is indexed up to
+   --  65 + Context'Length + Message'Length, which must stay <= Index_Range'Last
+   --  (= Max_Document_Bytes). The 512-byte headroom covers the 64+2+255
+   --  overhead; real documents are far below this ceiling.
+   Max_Message_Bytes : constant := Max_Document_Bytes - 512;
+
    function Verify
      (PK      : Public_Key;
       Message : Byte_Array;
       Context : Byte_Array;
       Sig     : Signature) return Boolean
      with Global => null,
-          Pre    => Message'Length > 0 and then Context'Length <= 255;
+          --  FIPS 204 permits an empty message (M = epsilon); the verifier must
+          --  not false-reject it. Mirrors LTHING_MLDSA65.Verify exactly so the
+          --  two parameter sets stay drop-in selectable.
+          Pre    => Message'Length <= Max_Message_Bytes
+                    and then Context'Length <= 255;
 
    --  Posture flag, mirrored from LTHING_MLDSA65. FALSE until the ML-DSA-87
    --  arithmetic core is implemented and passes the FIPS 204 ML-DSA-87 sigVer
