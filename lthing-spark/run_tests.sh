@@ -9,7 +9,6 @@ ulimit -s unlimited 2>/dev/null || ulimit -s 65536 2>/dev/null || true
 cd "$(dirname "$0")"
 export PATH=/root/.alire/bin:$PATH
 OBJ=obj_tests; rm -rf "$OBJ"; mkdir -p "$OBJ"
-LIB="$PWD/lib"
 fail=0
 for src in src/test_*.adb; do
   [ -e "$src" ] || continue
