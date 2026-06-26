@@ -1,15 +1,18 @@
-# FIPS 204 (ML-DSA-65) — Conformance & KAT Provenance
+# FIPS 204 (ML-DSA-65 and ML-DSA-87) — Conformance & KAT Provenance
 
 This note records, with a reproducible command behind every claim, (1) where the
-ML-DSA-65 sigVer test vectors come from, (2) how the verifier maps to FIPS 204
-final, and (3) the impact of the NIST FIPS 204 errata on the **verification
-path**. It complements `FIPS204_PROTOCOLS.md` (the algorithm-by-algorithm map);
-this file adds the *recent-developments* layer (errata + authoritative vector
-re-sourcing) requested in the test-coverage hardening.
+ML-DSA-65 and ML-DSA-87 sigVer test vectors come from, (2) how each verifier
+maps to FIPS 204 final, and (3) the impact of the NIST FIPS 204 errata on the
+**verification path**. It complements `FIPS204_PROTOCOLS.md` (the
+algorithm-by-algorithm map); this file adds the *recent-developments* layer
+(errata + authoritative vector re-sourcing) requested in the test-coverage
+hardening.
 
 Companion files: `FIPS204_PROTOCOLS.md` (Alg 3/8/21/29/30/35–43 line-by-line),
-`src/lthing_mldsa65.adb` (Verify), `src/mldsa_kat_vectors.ads` (generated),
-`kat/mldsa65_sigver.json` (fixture), `src/test_kat.adb` (gate).
+`src/lthing_mldsa65.adb`, `src/lthing_mldsa87.adb` (Verify),
+`src/mldsa_kat_vectors.ads` (generated), `src/mldsa87_kat_vectors.ads`
+(generated), `kat/mldsa65_sigver.json`, `kat/mldsa87_sigver.json` (fixtures),
+`src/test_kat.adb`, `src/test_kat87.adb` (gates).
 
 ---
 
@@ -113,3 +116,93 @@ gnatmake -q -D /tmp/b -aIsrc -o /tmp/b/test_kat src/test_kat.adb && /tmp/b/test_
 # (3) errata UseHint bound is enforced, not assumed
 gnatprove -P lthing.gpr -u lthing_mldsa_round.adb --level=2 --report=all   # Use_Hint Post 0..15 proved
 ```
+
+---
+
+## 5. ML-DSA-87 (FIPS 204 Level 5 / CNSA 2.0) — KAT Provenance & Parameter Map
+
+### 5.1 Normative source
+
+ML-DSA-87 is defined in the same **FIPS 204** standard (§ 1 above) under
+**Table 1, row ML-DSA-87**. Key parameters:
+
+| Parameter | Value |
+|-----------|-------|
+| k (rows of A) | 8 |
+| l (columns of A) | 7 |
+| η (private-key bound) | 2 |
+| τ (commitment weight) | 60 |
+| β = τ·η | 120 |
+| γ₁ | 2¹⁹ |
+| γ₂ = (q−1)/32 | 261888 |
+| ω (max hint weight) | 75 |
+| λ (security bits) | 256 |
+| c̃ size | 64 B |
+| Public key | 2592 B |
+| Signature | 4627 B |
+
+ML-DSA-87 targets NIST security Level 5 and satisfies the
+**CNSA 2.0 / NSS** mandate. The judicial layer exposes it as suite `0x0002`.
+
+### 5.2 KAT vector provenance — NIST ACVP
+
+The fixture `kat/mldsa87_sigver.json` (15 vectors, tcId 61..75) is the NIST ACVP
+**ML-DSA-87 / external / pure** group. In the upstream `prompt.json` this is
+**`tgId = 5`** (`parameterSet=ML-DSA-87, signatureInterface=external,
+preHash=pure`). Every `pk` / `message` / `context` / `signature` byte and every
+`expected` outcome is identical to the authoritative ACVP source — no value is
+hand-invented or self-derived (per the repo's "no frozen / self-derived vectors"
+rule).
+
+Same ACVP files as §2 (ML-DSA-65); only the tgId changes:
+
+```sh
+# fields: byte-for-byte identical (empty diff)
+diff <(jq -S '.testGroups[]|select(.tgId==5)|.tests[]|{tcId,pk,message,context,signature}' prompt.json) \
+     <(jq -S '.tests[]|{tcId,pk,message,context,signature}' <repo>/lthing-spark/kat/mldsa87_sigver.json)
+
+# expected outcomes: identical (3 accept / 12 reject)
+join -t$'\t' \
+  <(jq -r '.testGroups[]|select(.tgId==5)|.tests[]|"\(.tcId)\t\(.testPassed)"' expected.json | sort) \
+  <(jq -r '.tests[]|"\(.tcId)\t\(.expected)"' <repo>/lthing-spark/kat/mldsa87_sigver.json | sort)
+```
+
+Vector shape: `pk = 2592 B`, `sig = 4627 B`, outcomes **3 accept / 12 reject**.
+
+KAT gate:
+
+```sh
+gnatmake -q -D /tmp/b -aIsrc -o /tmp/b/test_kat87 src/test_kat87.adb && /tmp/b/test_kat87
+# → 15× [PASS], "ALL PASS ( 15 vectors)", exit 0
+```
+
+### 5.3 Algorithm mapping to FIPS 204
+
+The ML-DSA-87 verifier (`lthing_mldsa87.adb`) follows the identical Alg. 3
+(external Verify) and Alg. 8 (VerifyInternal) structure as the ML-DSA-65
+verifier, with all parameters substituted per Table 1. Specific differences
+from ML-DSA-65:
+
+| Step | ML-DSA-65 | ML-DSA-87 |
+|------|-----------|-----------|
+| c̃ hash output | 48 B | 64 B |
+| SampleInBall loop | i ∈ 207..255 (τ=49) | i ∈ 196..255 (τ=60) |
+| ExpandA matrix | 6×5 (k×l) | 8×7 |
+| z norm bound | γ₁−β = 2¹⁹−196 | γ₁−β = 2¹⁹−120 |
+| Hint weight check | ≤ 55 (ω) | ≤ 75 (ω) |
+| r0 norm bound | γ₂−β | γ₂−β (same formula) |
+
+Errata analysis from §3 applies identically — all errata items concern
+algorithm-level logic, not parameter-set-specific values.
+
+### 5.4 Judicial CNSA 2.0 dispatch
+
+Suite `0x0002` in the LTHING envelope header (§3.1) selects ML-DSA-87. The
+judicial layer (`lthing_judicial.adb`) dispatches before any crypto runs:
+
+- PK length must be exactly 2592 B; any other size → `Bad_Length`.
+- Signature length field must encode 4627; mismatch → `Bad_Length`.
+- Seal and chain hashes are verified identically to suite 0x0001.
+- `LTHING_MLDSA87.Verify` is called; failure → `Signature_Invalid`.
+
+Gate: `test_judicial87.adb` (6 relational checks, all `[PASS]`).
