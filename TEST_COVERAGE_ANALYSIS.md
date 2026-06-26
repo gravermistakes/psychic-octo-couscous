@@ -1,19 +1,21 @@
 # LTHING Ada/SPARK — Test Coverage Analysis
 
-**Subject:** `lthing-spark` — an **ML-DSA-65 (FIPS 204)** signature verifier
-(KeyGen/Sign/Verify) plus a fail-closed `.jd.lthing` judicial-document
-verification layer, over a **pure-Ada Keccak/SHAKE core** (`lthing_keccak`). The
-historical x86-64 asm hash and the `lthing_crypto_ffi` trust boundary have been
-**retired** — there is no longer any FFI or assembly in the build.
-**Date:** 2026-06-21
+**Subject:** `lthing-spark` — **ML-DSA-65 and ML-DSA-87 (FIPS 204)** signature
+verifiers (Verify only; ML-DSA-65 also has KeyGen/Sign) plus a fail-closed
+`.jd.lthing` judicial-document verification layer (suite 0x0001 → ML-DSA-65;
+suite 0x0002 / CNSA 2.0 → ML-DSA-87), over a **pure-Ada Keccak/SHAKE core**
+(`lthing_keccak`). The historical x86-64 asm hash and the `lthing_crypto_ffi`
+trust boundary have been **retired** — there is no longer any FFI or assembly
+in the build.
+**Date:** 2026-06-26
 **Method:** Every claim below was re-derived from the live tree, not read off an
 older report:
 
 ```sh
 cd lthing-spark
-./run_tests.sh                                          # 13/13 suites, exit 0
+./run_tests.sh                                          # 15/15 suites, exit 0
 export PATH=/root/.alire/bin:$PATH
-gnatprove -P lthing.gpr --level=2 --report=all -j0      # 865 checks, 0 unproved
+gnatprove -P lthing.gpr --level=2 --report=all -j0      # 1087 checks, 0 unproved
 ```
 
 No coverage instrumentation (`gnatcov`) is wired, so the per-unit *line/branch*
@@ -32,15 +34,16 @@ are tool output.
 
 ## 1. Ground truth (re-run for this revision)
 
-- **Proof:** `gnatprove -P lthing.gpr --level=2` over **25 analyzed units** →
-  **865 checks, 0 unproved, 0 justified** (173 by flow / 692 by provers:
-  Z3 4.13, cvc5 1.1.2, alt-ergo 2.4). Breakdown: 452 run-time checks, 147
-  assertions, 85 functional contracts, 84 initialization, 48 data-dependencies,
-  49 termination. **AoRTE + flow + every stated contract discharged.** All
-  `test_*.adb` mains are `SPARK_Mode (Off)` and correctly skipped by the prover.
-- **Tests:** `./run_tests.sh` builds and runs **all 13** `src/test_*.adb` mains,
+- **Proof:** `gnatprove -P lthing.gpr --level=2` over the full project →
+  **1087 checks, 0 unproved, 0 justified** (229 by flow / 858 by provers:
+  Z3 4.13, cvc5 1.1.2, alt-ergo 2.4). **AoRTE + flow + every stated contract
+  discharged** across both ML-DSA-65 and ML-DSA-87 implementations, the
+  judicial dispatch layer, the shared NTT/field/codec/sampler stack, and the
+  Keccak/SHAKE core. All `test_*.adb` mains are `SPARK_Mode (Off)` and
+  correctly skipped by the prover.
+- **Tests:** `./run_tests.sh` builds and runs **all 15** `src/test_*.adb` mains,
   greps for `[FAIL]`, and exits non-zero on any build/run/assert failure.
-  Verified: **13/13 suites pass, exit 0.**
+  Verified: **15/15 suites pass, exit 0.**
 
 Every production unit is `SPARK_Mode (On)`; there is **no `SPARK_Mode (Off)`
 code outside the test drivers**. Where proof applies it is stronger than a test,
@@ -65,8 +68,11 @@ line/branch coverage.
 | `lthing_mldsa_sample` | On | ExpandA / RejNTTPoly / SampleInBall / XOF | `test_sample`, `test_xof_cap` |
 | `lthing_mldsa_sign` | On | KeyGen / Sign (proof-companion to Verify) | `test_sign` (8) |
 | `lthing_mldsa65` | On | FIPS 204 `Verify (PK, Message, Context, Sig)`; `Arithmetic_Core_Complete = True` | `test_kat` (15), `test_verify_adv` (4) |
+| `lthing_mldsa87` | On | FIPS 204 ML-DSA-87 `Verify`; k=8, l=7, τ=60, ω=75, PK=2592 B, Sig=4627 B; `Arithmetic_Core_Complete = True` | `test_kat87` (15) |
+| `lthing_mldsa87_codec` | On | ML-DSA-87 pk/sig decode (z 20-bit/coeff, hints ω=75, c̃ 64 B) | `test_kat87` (end-to-end) |
+| `lthing_mldsa87_sample` | On | ML-DSA-87 SampleInBall (τ=60), ExpandA (8×7 matrix) | `test_kat87` (end-to-end) |
 
-**The 13 suites and their headline gates:**
+**The 15 suites and their headline gates:**
 
 - **`test_field`** — 14 relational checks: `Add(Q-1,1)=0`, commutativity,
   `Mul` distributes over `Add`, `Reduce((Q-1)²)=1`, and the `To_Centered` pivot
@@ -100,6 +106,17 @@ line/branch coverage.
   `Seal_Mismatch`, `Chain_Broken`, `Signature_Invalid`, and a **genuine signed
   genesis envelope → `Verified`/`Trusted`**, plus the `Trusted ↔ Verified`
   invariant and the `Parse_Unverified`-never-trusted guarantee.
+- **`test_kat87`** — the authoritative **15-vector ML-DSA-87 sigVer KAT**
+  (tcId 61..75, from `kat/mldsa87_sigver.json`, NIST ACVP tgId=5:
+  `parameterSet=ML-DSA-87, signatureInterface=external, preHash=pure`),
+  run through `LTHING_MLDSA87.Verify`. **15/15 against `expected`** (3 accept /
+  12 reject). Vector shape: PK=2592 B, sig=4627 B.
+- **`test_judicial87`** — 6 relational gates for the CNSA 2.0 judicial path
+  (suite 0x0002): wrong-sig-length → `Bad_Length`; ML-DSA-65-size PK for
+  suite 0x0002 → `Bad_Length`; well-formed envelope with zero sig →
+  `Signature_Invalid` (proves §9.1..§9.9 run for suite 0x0002); tampered body
+  → `Seal_Mismatch`; wrong `prev_chain` → `Chain_Broken`; `Trusted ↔ Verified`
+  invariant.
 
 ---
 
@@ -116,6 +133,9 @@ line/branch coverage.
 | `lthing_mldsa_codec` | encode+decode | medium–high | round-trip + fail-closed hint |
 | `lthing_mldsa_sample` | full | medium | τ/±1, determinism, XOF capacity |
 | `lthing_mldsa65` | 1/1 Verify | medium–high | 15-vector KAT + adversarial tamper |
+| `lthing_mldsa87` | 1/1 Verify | medium–high | 15-vector KAT (tcId 61–75) |
+| `lthing_mldsa87_codec` | pk+sig decode | medium–high | exercised end-to-end by test_kat87 |
+| `lthing_mldsa87_sample` | full | medium | SampleInBall(τ=60), ExpandA 8×7 |
 
 ---
 
@@ -148,7 +168,7 @@ block byte positions for the *judicial document* sizes (often ~MiB, rarely
 ### LOW / PROCESS
 
 **4.3 No literal coverage measurement.** `gnatcov` (or
-`-fprofile-arcs -ftest-coverage`) over the 13 drivers would replace the §3
+`-fprofile-arcs -ftest-coverage`) over the 15 drivers would replace the §3
 hand-estimates with hard line/branch/MCDC numbers. With every status code now
 reachable, there is no longer a known dead branch for it to flag — but it would
 keep that true.
@@ -172,22 +192,22 @@ confidence in the headline guarantee further; it is cheap and still absent.
 
 ## 5. Bottom line
 
-**The ML-DSA-65 verifier works and is KAT-true.** The FIPS 204 Alg. 3/8 verifier
-is implemented across sampling, rounding, codec, NTT, and `Verify`, all
-`SPARK_Mode (On)`; the authoritative 15-vector sigVer KAT passes **15/15** (3
-accept, 12 reject) and a Sign→Verify round-trip with tamper rejection passes
-independently. Hashing is a proved pure-SPARK Keccak/SHAKE — the asm/FFI is
-retired. The judicial layer verifies a real `.jd.lthing` envelope end-to-end
-(header geometry, seal-hash recompute, chain-link, ML-DSA-65 signature) and every
-`Verify_Status` is both reachable and tested, including a genuine signed envelope
-reaching `Verified`/`Trusted`.
+**Both ML-DSA-65 and ML-DSA-87 verifiers are implemented, proved, and KAT-true.**
+The FIPS 204 Alg. 3/8 verifier stack (sampling, rounding, codec, NTT, `Verify`)
+exists for both parameter sets, all `SPARK_Mode (On)`. Each has an authoritative
+15-vector NIST ACVP sigVer KAT passing **15/15** (3 accept / 12 reject):
+ML-DSA-65 (tcId 31..45) and ML-DSA-87 (tcId 61..75). The judicial layer
+dispatches suite 0x0001 → ML-DSA-65 and suite 0x0002 / CNSA 2.0 → ML-DSA-87;
+both dispatch paths are exercised and all `Verify_Status` values are reachable
+and tested, including a genuine signed envelope reaching `Verified`/`Trusted`.
+Hashing is proved pure-SPARK Keccak/SHAKE — the asm/FFI is retired.
 
 Authoritative, re-run for this revision:
-`gnatprove -P lthing.gpr --level=2` = **865 checks, 0 unproved, 0 justified**
-across 25 units; `./run_tests.sh` = **13/13 suites green**, exit 0.
+`gnatprove -P lthing.gpr --level=2` = **1087 checks, 0 unproved, 0 justified**
+(229 flow / 858 provers); `./run_tests.sh` = **15/15 suites green**, exit 0.
 
 Residual work is breadth, not core correctness: an isolated NTT reference KAT
 (4.1), a frozen non-aligned SHAKE512 vector (4.2), `gnatcov` numbers (4.3), the
 unimplemented `.lthing` doctype family (4.4), and a fail-closed fuzz harness
 (4.5). The crypto core and the judicial gate — the project's reason for being —
-are done, proved, and KAT-validated.
+are done for both ML-DSA-65 and ML-DSA-87, proved, and KAT-validated.
