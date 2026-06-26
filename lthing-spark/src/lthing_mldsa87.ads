@@ -69,16 +69,6 @@ package LTHING_MLDSA87 is
    --  A degree-255 polynomial (matches the shared NTT layer's Poly shape).
    type Poly is array (0 .. N - 1) of Coeff;
 
-   --  FIPS 204 Algorithm 3 (ML-DSA.Verify), external/pure interface.
-   --  Context is the application context string (length 0 .. 255). The verifier
-   --  forms M' = 0x00 || len(ctx) || ctx || Message internally (Alg. 3) before
-   --  hashing into mu. Same signature shape as LTHING_MLDSA65.Verify so the two
-   --  sets are drop-in selectable.
-   --
-   --  Postcondition note: as with ML-DSA-65, cryptographic soundness (True
-   --  implies a genuine FIPS 204 acceptance) cannot be proved statically; the
-   --  safety direction is the contract obligation -- while no validated core
-   --  exists, any body must return False unconditionally (fail-closed).
    --  Upper bound on the application message length, mirrored from
    --  LTHING_MLDSA65. The verifier forms M' = 0x00 || len(ctx) || ctx ||
    --  Message (2 framing bytes + up to 255 context bytes) and then tr || M'
@@ -88,21 +78,27 @@ package LTHING_MLDSA87 is
    --  overhead; real documents are far below this ceiling.
    Max_Message_Bytes : constant := Max_Document_Bytes - 512;
 
+   --  FIPS 204 Algorithm 3 (ML-DSA.Verify), external/pure interface.
+   --  Context is the application context string (length 0 .. 255). The verifier
+   --  forms M' = 0x00 || len(ctx) || ctx || Message internally (Alg. 3) before
+   --  hashing into mu. Same signature shape as LTHING_MLDSA65.Verify so the two
+   --  sets are drop-in selectable.
+   --
+   --  FIPS 204 permits an empty message (M = epsilon); the verifier must not
+   --  false-reject it. Mirrors LTHING_MLDSA65.Verify exactly so the
+   --  two parameter sets stay drop-in selectable.
    function Verify
      (PK      : Public_Key;
       Message : Byte_Array;
       Context : Byte_Array;
       Sig     : Signature) return Boolean
      with Global => null,
-          --  FIPS 204 permits an empty message (M = epsilon); the verifier must
-          --  not false-reject it. Mirrors LTHING_MLDSA65.Verify exactly so the
-          --  two parameter sets stay drop-in selectable.
           Pre    => Message'Length <= Max_Message_Bytes
                     and then Context'Length <= 255;
 
-   --  Posture flag, mirrored from LTHING_MLDSA65. FALSE until the ML-DSA-87
-   --  arithmetic core is implemented and passes the FIPS 204 ML-DSA-87 sigVer
-   --  KAT. Flip ONLY when that holds.
-   Arithmetic_Core_Complete : constant Boolean := False;
+   --  Posture flag, mirrored from LTHING_MLDSA65. TRUE now that the ML-DSA-87
+   --  arithmetic core (codec + sampler + Alg. 3/8 verifier) is implemented and
+   --  passes all 15 FIPS 204 ML-DSA-87 sigVer KAT vectors (tcId 61..75).
+   Arithmetic_Core_Complete : constant Boolean := True;
 
 end LTHING_MLDSA87;

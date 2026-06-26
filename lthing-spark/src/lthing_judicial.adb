@@ -26,6 +26,7 @@ pragma SPARK_Mode (On);
 with Interfaces;    use Interfaces;   --  bitwise or/xor on Byte; Unsigned_*
 with LTHING_Keccak;
 with LTHING_MLDSA65;
+with LTHING_MLDSA87;
 
 package body LTHING_Judicial is
 
@@ -49,7 +50,8 @@ package body LTHING_Judicial is
    Sig_Len_Off   : constant := 32;          --  4 B  signature length
    Aead_Len_Off  : constant := 36;          --  4 B  AEAD tag length
 
-   Suite_Baseline : constant := 16#0001#;   --  §3.1 only baseline supported
+   Suite_Baseline : constant := 16#0001#;   --  ML-DSA-65 baseline (NIST L3)
+   Suite_MLDSA87  : constant := 16#0002#;  --  ML-DSA-87 (NSS / CNSA 2.0, NIST L5)
 
    --  §5.1 seal field widths for suite 0x0001 (ArtifactHash = 64).
    Hash_Bytes    : constant := 64;          --  LTHING SHAKE512 digest
@@ -191,7 +193,14 @@ package body LTHING_Judicial is
       --  every header read below is in bounds.
       pragma Assert (Document'Length >= Header_Bytes);
       declare
-         Suite : constant Unsigned_16 := Read_U16 (Document, F + Suite_Off);
+         Suite    : constant Unsigned_16 := Read_U16 (Document, F + Suite_Off);
+         Is_87    : constant Boolean := Suite = Suite_MLDSA87;
+         Exp_SigB : constant Natural :=
+           (if Is_87 then LTHING_MLDSA87.Sig_Bytes
+                     else LTHING_MLDSA65.Sig_Bytes);
+         Exp_PKB  : constant Natural :=
+           (if Is_87 then LTHING_MLDSA87.PK_Bytes
+                     else LTHING_MLDSA65.PK_Bytes);
          BL    : constant Unsigned_64 := Read_U32 (Document, F + Body_Len_Off);
          SL    : constant Unsigned_64 := Read_U32 (Document, F + Seal_Len_Off);
          SigL  : constant Unsigned_64 := Read_U32 (Document, F + Sig_Len_Off);
@@ -205,16 +214,15 @@ package body LTHING_Judicial is
             return;
          end if;
 
-         --  §3.1: only suite 0x0001 (baseline) is supported; 0x0000 reserved.
-         if Suite /= Suite_Baseline then
+         --  §3.1: suite 0x0001 (ML-DSA-65) and 0x0002 (ML-DSA-87 / CNSA 2.0)
+         --  are accepted; 0x0000 is RESERVED and all other values are unknown.
+         if Suite /= Suite_Baseline and then Suite /= Suite_MLDSA87 then
             Result := (Status => Bad_Length, Trusted => False);
             return;
          end if;
 
-         --  Suite 0x0001 fixes the signature length and forbids AEAD.
-         if SigL /= Unsigned_64 (LTHING_MLDSA65.Sig_Bytes)
-           or else AeadL /= 0
-         then
+         --  The suite fixes the signature length and forbids AEAD in both cases.
+         if SigL /= Unsigned_64 (Exp_SigB) or else AeadL /= 0 then
             Result := (Status => Bad_Length, Trusted => False);
             return;
          end if;
@@ -226,8 +234,8 @@ package body LTHING_Judicial is
             return;
          end if;
 
-         --  Trusted PK must be exactly the ML-DSA-65 public-key size.
-         if Public_Key'Length /= LTHING_MLDSA65.PK_Bytes then
+         --  Trusted PK must match the suite's public-key size.
+         if Public_Key'Length /= Exp_PKB then
             Result := (Status => Bad_Length, Trusted => False);
             return;
          end if;
@@ -249,8 +257,7 @@ package body LTHING_Judicial is
          begin
             --  Section geometry, all derived from Total = Document'Length:
             --  body/seal/signature fit exactly within the wire bytes.
-            pragma Assert (Sig_Off + (LTHING_MLDSA65.Sig_Bytes - 1)
-                           = Document'Last);
+            pragma Assert (Sig_Off + (Exp_SigB - 1) = Document'Last);
             pragma Assert (Sig_Off <= Document'Last);
             pragma Assert (Seal_Off <= Sig_Off);
             pragma Assert (Body_Off + Body_Len = Seal_Off);
@@ -366,30 +373,57 @@ package body LTHING_Judicial is
                      end if;
                   end;
 
-                  --  §9.10: ML-DSA-65 signature over header ‖ body ‖ seal,
-                  --  empty context (§7 design recommendation).
+                  --  §9.10: ML-DSA signature over header ‖ body ‖ seal,
+                  --  empty context (§7 design recommendation). Suite selects
+                  --  ML-DSA-65 (0x0001) or ML-DSA-87 (0x0002).
                   declare
-                     PKc   : LTHING_MLDSA65.Public_Key := (others => 0);
-                     Sgc   : LTHING_MLDSA65.Signature  := (others => 0);
                      Empty : constant Byte_Array (1 .. 0) := (others => 0);
                      PKf   : constant Index_Range := Public_Key'First;
                   begin
-                     for I in 0 .. LTHING_MLDSA65.PK_Bytes - 1 loop
-                        PKc (I) := Public_Key (PKf + I);
-                     end loop;
-                     for I in 0 .. LTHING_MLDSA65.Sig_Bytes - 1 loop
-                        Sgc (I) := Document (Sig_Off + I);
-                     end loop;
-
-                     if not LTHING_MLDSA65.Verify
-                              (PK      => PKc,
-                               Message => Document (F .. F + Signed_Len - 1),
-                               Context => Empty,
-                               Sig     => Sgc)
-                     then
-                        Result :=
-                          (Status => Signature_Invalid, Trusted => False);
-                        return;
+                     if Is_87 then
+                        declare
+                           PKc : LTHING_MLDSA87.Public_Key := (others => 0);
+                           Sgc : LTHING_MLDSA87.Signature  := (others => 0);
+                        begin
+                           for I in 0 .. LTHING_MLDSA87.PK_Bytes - 1 loop
+                              PKc (I) := Public_Key (PKf + I);
+                           end loop;
+                           for I in 0 .. LTHING_MLDSA87.Sig_Bytes - 1 loop
+                              Sgc (I) := Document (Sig_Off + I);
+                           end loop;
+                           if not LTHING_MLDSA87.Verify
+                                    (PK      => PKc,
+                                     Message => Document (F .. F + Signed_Len - 1),
+                                     Context => Empty,
+                                     Sig     => Sgc)
+                           then
+                              Result :=
+                                (Status => Signature_Invalid, Trusted => False);
+                              return;
+                           end if;
+                        end;
+                     else
+                        declare
+                           PKc : LTHING_MLDSA65.Public_Key := (others => 0);
+                           Sgc : LTHING_MLDSA65.Signature  := (others => 0);
+                        begin
+                           for I in 0 .. LTHING_MLDSA65.PK_Bytes - 1 loop
+                              PKc (I) := Public_Key (PKf + I);
+                           end loop;
+                           for I in 0 .. LTHING_MLDSA65.Sig_Bytes - 1 loop
+                              Sgc (I) := Document (Sig_Off + I);
+                           end loop;
+                           if not LTHING_MLDSA65.Verify
+                                    (PK      => PKc,
+                                     Message => Document (F .. F + Signed_Len - 1),
+                                     Context => Empty,
+                                     Sig     => Sgc)
+                           then
+                              Result :=
+                                (Status => Signature_Invalid, Trusted => False);
+                              return;
+                           end if;
+                        end;
                      end if;
                   end;
 
