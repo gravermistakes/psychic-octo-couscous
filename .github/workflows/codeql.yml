@@ -1,0 +1,115 @@
+# For most projects, this workflow file will not need changing; you simply need
+# to commit it to your repository.
+#
+# You may wish to alter this file to override the set of languages analyzed,
+# or to provide custom queries or build logic.
+#
+# ******** NOTE ********
+# We have attempted to detect the languages in your repository. Please check
+# the `language` matrix defined below to confirm you have the correct set of
+# supported CodeQL languages.
+#
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "main", "good[a-zA-Z0-9]" ]
+  pull_request:
+    branches: [ "main", "good[a-zA-Z0-9]" ]
+  schedule:
+    - cron: '31 6 * * 2'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    # Runner size impacts CodeQL analysis time. To learn more, please see:
+    #   - https://gh.io/recommended-hardware-resources-for-running-codeql
+    #   - https://gh.io/supported-runners-and-hardware-resources
+    #   - https://gh.io/using-larger-runners (GitHub.com only)
+    # Consider using larger runners or machines with greater resources for possible analysis time improvements.
+    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    permissions:
+      # required for all workflows
+      security-events: write
+
+      # required to fetch internal or private CodeQL packs
+      packages: read
+
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - language: actions
+          build-mode: none
+        - language: python
+          build-mode: none
+        # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
+        # Use `c-cpp` to analyze code written in C, C++ or both
+        # Use 'java-kotlin' to analyze code written in Java, Kotlin or both
+        # Use 'javascript-typescript' to analyze code written in JavaScript, TypeScript or both
+        # To learn more about changing the languages that are analyzed or customizing the build mode for your analysis,
+        # see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning.
+        # If you are analyzing a compiled language, you can modify the 'build-mode' for that language to customize how
+        # your codebase is analyzed, see https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/codeql-code-scanning-for-compiled-languages
+    steps:
+             - name: Rational Functional Tester - UI Test GitHub Action
+  # You may pin to the exact commit or the version.
+  # uses: IBM/devopsauto-uitest-actions@5f41e8e36c09b960ec2701d231867d3155f2c672
+  uses: IBM/devopsauto-uitest-actions@v1
+  with:
+    # The complete path to the Eclipse workspace, required if Config File is not specified
+    workspace: 
+    # The name of a project within the workspace to use, required if Config File is not specified
+    project: 
+    # The name of a test within the project to use. A test can be WebUI test, Compound test, Performance schedule or Accelerated Functional Test (AFT) suite, required if Config File is not specified
+    suite: 
+    # The path to the IMShared folder in your local installation, if it is not at default location. This is where plugins and product dependencies will be located by the execution agent, required if Config File is not specified
+    imshared: # optional
+    # Use this option to specify the complete path to a file that contains the parameters for a test run.
+    configFile: # optional
+    # You can use this parameter to specify the file directory path to store the exported HTTP test log. You can provide multiple parameter entries when running multiple tests. You must use a colon to separate the parameter entries. For example: c:/logexport.txt:c:/secondlogexport.txt
+    exportLog: # optional
+    # Use this option to export the unified report to any of the formats - PDF, XML or HTML. For example, to export the report to only the pdf format, you can input: type=unified;format=pdf;folder=path;filename=testreport. If you want to export the report to multiple formats, you can specify the file formats as comma-separated values.
+    exportReport: # optional
+    # You can use this option to specify a comma-separated list of report IDs along with exportstats or exportstatshtml to list the reports that you want to export in place of the default reports, or the reports selected under Preferences. To retrieve the report IDs, navigate to Window > Preferences > Test > Performance Test Reports > Export Reports from Rational Functional Tester and under Select reports to export, select the required reports, and click Copy ID to clipboard.
+    exportStatReportList: # optional
+    # Use this option to provide the complete path to a directory that you can use to store the exported report in a comma-separated values (CSV) format.
+    exportStats: # optional
+    # Use this field to enter one or more formats for the reports that you want to export by using a comma as a separator. The options are simple.csv, full.csv, simple.json, full.json, csv, and json. When you want to export both simple and full reports in json or csv format, you can specify json or csv as the options. The reports are saved to the location specified in the exportStats field. This field must be used in conjunction with exportStats field.
+    exportStatsFormat: # optional
+    # Use this option if you want to export web analytic results only. The results are exported in the specified directory. You can then analyze the results on a web browser without using the test workbench.
+    exportStatsHtml: # optional
+    # Path of the Project location to be imported. You can also use an empty workspace folder on your computer to import the UI Test project resources and run the tests.
+    imports: # optional
+    # Use this option to add labels to test results. To add multiple labels to a test result, you must separate each label by using a comma.
+    labels: # optional
+    # Determines whether a result file with the same name is overwritten. The default value, false, indicates that the new result file is created. If the value is true, the file is overwritten and retains the same file name
+    overwrite: # optional
+    # Use this argument to run a Web UI test in parallel on different browsers.
+    protocolInput: # optional
+    # You can use this parameter to publish test results to the Server. The format is: serverURL#project.name=projectName&amp;teamspace.name=teamspaceName.
+    publish: # optional
+    # You can use this option to publish the test results based on the completion status of the tests. The supported values are FAIL,PASS,INCONCLUSIVE,ERROR,ALL.
+    publishFor: # optional
+    # You can use this option to publish specific test results to the Server. The supported values are FT, STATS, TESTLOG.
+    publishReports: # optional
+    # Specify a name for the results file. If you do not specify a name, the test or schedule name appended by the timestamp is used for the name. The results file is stored in the Results directory. If you are running multiple tests, do not provide a name for the results file.
+    results: # optional
+    # Use this option to replace dataset values during a test or schedule run. You must ensure that both original and new datasets are in the same workspace and have the same column names. You must also include the path to the dataset. For example, /project_name/ds_path/ds_filename.csv:/project_name/ds_path/new_ds_filename.csv
+    swapDatasets: # optional
+    # Add text to display it in the User Comments row of the report.
+    userComments: # optional
+    # The complete path to the XML file that contains the variable name and value pairs.
+    varFile: # optional
+    # To specify the Java™ maximum heap size for the Java™ process that controls the command line playback, use this option with the -Xmx argument. For example, when you input -Xmx4096m, it specifies a maximum heap size of 4096m. To execute tests in parallel on all mobile devices, which are in passive mode, connected to the workbench and ready for playback, input the value: "-Dall.available.targets.in.parallel=true". To execute tests in parallel on all supported desktop browsers and connected mobile devices, input the value "-Dall.available.targets.in.parallel=all". To execute tests in parallel on selected desktop browsers and connected mobile devices, input the value "-Dall.available.targets.in.parallel=browser1,browswer2,browser3". You must separate browser names with a comma. For example, firefox, ff, chrome, ie, ie64, safari, "-Dall.available.targets.in.parallel=browser1,browser2,browser3".
+    vmArgs: # optional
+          
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:${{matrix.language}}"
